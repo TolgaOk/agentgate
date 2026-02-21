@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,29 @@ import (
 
 const maxSteps = 20
 
+// Exit codes for structured error reporting.
+const (
+	ExitOK      = 0
+	ExitAgent   = 1 // agent loop error (max steps, stream error)
+	ExitUsage   = 2 // bad config, missing args
+	ExitBudget  = 3 // budget exceeded
+	ExitTimeout = 4 // context deadline / timeout
+)
+
+// Status returns a machine-readable status string and exit code for the given error.
+func Status(err error) (string, int) {
+	if err == nil {
+		return "ok", ExitOK
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "timeout", ExitTimeout
+	}
+	if strings.Contains(err.Error(), "budget") {
+		return "budget", ExitBudget
+	}
+	return "error", ExitAgent
+}
+
 type Agent struct {
 	Provider     provider.Provider
 	ProviderName string
@@ -25,6 +49,7 @@ type Agent struct {
 	Model        string
 	SystemPrompt string
 	MaxTokens    int
+	SessionID    string
 	Out          io.Writer
 }
 
@@ -97,7 +122,7 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 		if a.Metrics != nil {
 			a.Metrics.Record(ctx, metrics.CallRecord{
 				ID:           fmt.Sprintf("step-%d-%d", step, time.Now().UnixMilli()),
-				SessionID:    "default",
+				SessionID:    a.SessionID,
 				Timestamp:    time.Now(),
 				Provider:     a.ProviderName,
 				Model:        a.Model,
