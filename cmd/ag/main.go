@@ -106,8 +106,10 @@ func runAsk(cmd *cobra.Command, args []string) error {
 			fatal(err)
 		}
 		e.provider = queue.New(p, queue.Config{
-			RPM:    e.cfg.RateLimitRPM,
-			Budget: e.cfg.BudgetDaily,
+			GlobalLimit:   e.cfg.ConcurrentGlobalLimit,
+			ProviderLimit: e.cfg.ConcurrentPerProviderLimit,
+			ProviderName:  e.cfg.Provider,
+			Model:         e.cfg.Model,
 		}, e.store)
 	}
 
@@ -193,7 +195,6 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		Provider:     e.provider,
 		ProviderName: e.cfg.Provider,
 		Policy:       e.pol,
-		Metrics:      e.store,
 		Model:        e.cfg.Model,
 		SystemPrompt: sysPrompt,
 		MaxTokens:    maxTokens,
@@ -268,8 +269,10 @@ func setupEnv() (*env, error) {
 	}
 
 	q := queue.New(p, queue.Config{
-		RPM:    cfg.RateLimitRPM,
-		Budget: cfg.BudgetDaily,
+		GlobalLimit:   cfg.ConcurrentGlobalLimit,
+		ProviderLimit: cfg.ConcurrentPerProviderLimit,
+		ProviderName:  cfg.Provider,
+		Model:         cfg.Model,
 	}, store)
 
 	return &env{cfg: cfg, pol: pol, store: store, provider: q}, nil

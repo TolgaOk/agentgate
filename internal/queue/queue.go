@@ -5,42 +5,41 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/sony/gobreaker/v2"
-	"golang.org/x/time/rate"
 
 	"github.com/TolgaOk/agentgate/internal/metrics"
 	"github.com/TolgaOk/agentgate/internal/provider"
 )
 
-const maxRetries = 3
+const (
+	maxRetries   = 3
+	pollInterval = 500 * time.Millisecond
+)
 
-// Queue wraps a provider with rate limiting, budget checks,
-// circuit breaking, and retry logic. It implements provider.Provider.
 type Queue struct {
-	inner   provider.Provider
-	limiter *rate.Limiter
-	breaker *gobreaker.CircuitBreaker[any]
-	metrics *metrics.Store
-	budget  float64 // daily budget (0 = unlimited) — reserved for future use
+	inner         provider.Provider
+	breaker       *gobreaker.CircuitBreaker[any]
+	store         *metrics.Store
+	providerName  string
+	model         string
+	sessionID     string
+	globalLimit   int
+	providerLimit int
 }
 
 type Config struct {
-	RPM    int     // requests per minute
-	Budget float64 // daily budget in USD (0 = unlimited)
+	GlobalLimit   int
+	ProviderLimit int
+	ProviderName  string
+	Model         string
+	SessionID     string
 }
 
 func New(p provider.Provider, cfg Config, store *metrics.Store) *Queue {
-	// Rate limiter: RPM tokens, refill one per (60/RPM) seconds.
-	rpm := cfg.RPM
-	if rpm <= 0 {
-		rpm = 50
-	}
-	limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(rpm)), 1)
-
-	// Circuit breaker: trip after 5 consecutive failures, half-open after 30s.
 	breaker := gobreaker.NewCircuitBreaker[any](gobreaker.Settings{
 		Name: "llm",
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
@@ -50,56 +49,145 @@ func New(p provider.Provider, cfg Config, store *metrics.Store) *Queue {
 	})
 
 	return &Queue{
-		inner:   p,
-		limiter: limiter,
-		breaker: breaker,
-		metrics: store,
-		budget:  cfg.Budget,
+		inner:         p,
+		breaker:       breaker,
+		store:         store,
+		providerName:  cfg.ProviderName,
+		model:         cfg.Model,
+		sessionID:     cfg.SessionID,
+		globalLimit:   cfg.GlobalLimit,
+		providerLimit: cfg.ProviderLimit,
 	}
 }
 
 func (q *Queue) Chat(ctx context.Context, req provider.Request) (provider.Response, error) {
-	if err := q.limiter.Wait(ctx); err != nil {
-		return provider.Response{}, fmt.Errorf("queue: rate limit: %w", err)
+	callID, err := q.acquire(ctx)
+	if err != nil {
+		return provider.Response{}, err
 	}
 
-	var resp provider.Response
-	var lastErr error
-
-	for attempt := range maxRetries {
-		result, err := q.breaker.Execute(func() (any, error) {
-			return q.inner.Chat(ctx, req)
-		})
-		if err == nil {
-			resp = result.(provider.Response)
-			return resp, nil
-		}
-		lastErr = err
-		if !isRetryable(err) {
-			return provider.Response{}, err
-		}
-		if attempt < maxRetries-1 {
-			if !backoff(ctx, attempt) {
-				return provider.Response{}, ctx.Err()
-			}
-		}
+	resp, err := q.callWithRetry(ctx, func() (any, error) {
+		return q.inner.Chat(ctx, req)
+	})
+	if err != nil {
+		q.fail(ctx, callID, err.Error())
+		return provider.Response{}, err
 	}
 
-	return provider.Response{}, fmt.Errorf("queue: all %d retries failed: %w", maxRetries, lastErr)
+	r := resp.(provider.Response)
+	q.complete(ctx, callID, r.Usage.InputTokens, r.Usage.OutputTokens, 0)
+	return r, nil
 }
 
 func (q *Queue) ChatStream(ctx context.Context, req provider.Request) (<-chan provider.StreamChunk, error) {
-	if err := q.limiter.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("queue: rate limit: %w", err)
+	callID, err := q.acquire(ctx)
+	if err != nil {
+		return nil, err
 	}
 
+	ch, err := q.callWithRetry(ctx, func() (any, error) {
+		return q.inner.ChatStream(ctx, req)
+	})
+	if err != nil {
+		q.fail(ctx, callID, err.Error())
+		return nil, err
+	}
+
+	innerCh := ch.(<-chan provider.StreamChunk)
+	return q.wrapStream(ctx, callID, innerCh), nil
+}
+
+// acquire enqueues a call and waits until a slot is available.
+func (q *Queue) acquire(ctx context.Context) (string, error) {
+	callID := fmt.Sprintf("call-%d-%d", os.Getpid(), time.Now().UnixNano())
+
+	if q.store == nil {
+		return callID, nil
+	}
+
+	if err := q.store.Enqueue(ctx, callID, q.sessionID, q.providerName, q.model); err != nil {
+		return "", err
+	}
+
+	notified := false
+	for {
+		ok, err := q.store.TryAcquire(ctx, callID, q.providerName, q.globalLimit, q.providerLimit)
+		if err != nil {
+			q.store.Fail(ctx, callID, err.Error())
+			return "", err
+		}
+		if ok {
+			return callID, nil
+		}
+
+		if !notified {
+			fmt.Fprintf(os.Stderr, "waiting for rate limiter...\n")
+			notified = true
+		}
+
+		select {
+		case <-time.After(pollInterval):
+		case <-ctx.Done():
+			q.store.Fail(ctx, callID, "cancelled")
+			return "", ctx.Err()
+		}
+	}
+}
+
+// wrapStream proxies the inner channel and calls complete/fail when done.
+func (q *Queue) wrapStream(ctx context.Context, callID string, inner <-chan provider.StreamChunk) <-chan provider.StreamChunk {
+	out := make(chan provider.StreamChunk)
+	go func() {
+		defer close(out)
+		var totalIn, totalOut int
+		start := time.Now()
+
+		for chunk := range inner {
+			if chunk.Kind == provider.ChunkUsage && chunk.Usage != nil {
+				totalIn += chunk.Usage.InputTokens
+				totalOut += chunk.Usage.OutputTokens
+			}
+			if chunk.Kind == provider.ChunkError && chunk.Err != nil {
+				q.fail(ctx, callID, chunk.Err.Error())
+			}
+
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				q.fail(ctx, callID, "cancelled")
+				return
+			}
+		}
+
+		q.complete(ctx, callID, totalIn, totalOut, time.Since(start).Milliseconds())
+	}()
+	return out
+}
+
+func (q *Queue) complete(ctx context.Context, callID string, inTok, outTok int, latencyMs int64) {
+	if q.store == nil {
+		return
+	}
+	q.store.Complete(ctx, callID, metrics.CallRecord{
+		InputTokens:  inTok,
+		OutputTokens: outTok,
+		LatencyMs:    latencyMs,
+	})
+}
+
+func (q *Queue) fail(ctx context.Context, callID, reason string) {
+	if q.store == nil {
+		return
+	}
+	q.store.Fail(ctx, callID, reason)
+}
+
+func (q *Queue) callWithRetry(ctx context.Context, fn func() (any, error)) (any, error) {
 	var lastErr error
 	for attempt := range maxRetries {
-		result, err := q.breaker.Execute(func() (any, error) {
-			return q.inner.ChatStream(ctx, req)
-		})
+		result, err := q.breaker.Execute(fn)
 		if err == nil {
-			return result.(<-chan provider.StreamChunk), nil
+			return result, nil
 		}
 		lastErr = err
 		if !isRetryable(err) {
@@ -111,11 +199,9 @@ func (q *Queue) ChatStream(ctx context.Context, req provider.Request) (<-chan pr
 			}
 		}
 	}
-
 	return nil, fmt.Errorf("queue: all %d retries failed: %w", maxRetries, lastErr)
 }
 
-// isRetryable returns true for errors that suggest a transient failure.
 func isRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -127,11 +213,9 @@ func isRetryable(err error) bool {
 		strings.Contains(msg, "overloaded")
 }
 
-// backoff sleeps for exponential backoff with jitter.
-// Returns false if context is cancelled.
 func backoff(ctx context.Context, attempt int) bool {
 	base := time.Duration(math.Pow(2, float64(attempt))) * time.Second
-	jitter := time.Duration(rand.Int64N(int64(base/2)))
+	jitter := time.Duration(rand.Int64N(int64(base / 2)))
 	delay := base + jitter
 
 	select {

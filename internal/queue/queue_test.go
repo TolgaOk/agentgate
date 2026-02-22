@@ -30,7 +30,7 @@ func TestChatPassthrough(t *testing.T) {
 			return provider.Response{Text: "ok"}, nil
 		},
 	}
-	q := New(mock, Config{RPM: 1000}, nil)
+	q := New(mock, Config{GlobalLimit: 100, ProviderLimit: 100}, nil)
 	resp, err := q.Chat(context.Background(), provider.Request{})
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestRetryOnTransientError(t *testing.T) {
 			return provider.Response{Text: "ok"}, nil
 		},
 	}
-	q := New(mock, Config{RPM: 1000}, nil)
+	q := New(mock, Config{GlobalLimit: 100, ProviderLimit: 100}, nil)
 	resp, err := q.Chat(context.Background(), provider.Request{})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestNoRetryOnNonTransient(t *testing.T) {
 			return provider.Response{}, fmt.Errorf("HTTP 401 unauthorized")
 		},
 	}
-	q := New(mock, Config{RPM: 1000}, nil)
+	q := New(mock, Config{GlobalLimit: 100, ProviderLimit: 100}, nil)
 	_, err := q.Chat(context.Background(), provider.Request{})
 	if err == nil {
 		t.Error("expected error")
@@ -82,27 +82,23 @@ func TestNoRetryOnNonTransient(t *testing.T) {
 	}
 }
 
-func TestRateLimiting(t *testing.T) {
+func TestPassthroughWithNoMetrics(t *testing.T) {
 	mock := &mockProvider{
 		chatFn: func(_ context.Context, _ provider.Request) (provider.Response, error) {
 			return provider.Response{Text: "ok"}, nil
 		},
 	}
-	// 60 RPM = 1 per second.
-	q := New(mock, Config{RPM: 60}, nil)
+	// nil metrics store = no concurrency limiting.
+	q := New(mock, Config{GlobalLimit: 100, ProviderLimit: 100}, nil)
 
-	start := time.Now()
-	for range 3 {
-		_, err := q.Chat(context.Background(), provider.Request{})
+	for range 5 {
+		resp, err := q.Chat(context.Background(), provider.Request{})
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	elapsed := time.Since(start)
-
-	// 3 calls at 1/sec should take at least ~1.5s (first is immediate, 2 waits).
-	if elapsed < 1*time.Second {
-		t.Errorf("elapsed = %v, expected >= 1s for rate limiting", elapsed)
+		if resp.Text != "ok" {
+			t.Errorf("Text = %q, want ok", resp.Text)
+		}
 	}
 }
 
@@ -112,7 +108,7 @@ func TestContextCancellation(t *testing.T) {
 			return provider.Response{}, fmt.Errorf("HTTP 429 rate limited")
 		},
 	}
-	q := New(mock, Config{RPM: 1000}, nil)
+	q := New(mock, Config{GlobalLimit: 100, ProviderLimit: 100}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -131,7 +127,7 @@ func TestCircuitBreakerTrips(t *testing.T) {
 			return provider.Response{}, fmt.Errorf("HTTP 401 server error")
 		},
 	}
-	q := New(mock, Config{RPM: 1000}, nil)
+	q := New(mock, Config{GlobalLimit: 100, ProviderLimit: 100}, nil)
 
 	// Make enough failing calls to trip the breaker (5 consecutive).
 	for range 6 {

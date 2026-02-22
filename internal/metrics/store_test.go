@@ -18,41 +18,23 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
-func TestRecordAndTodayUsage(t *testing.T) {
+func TestRecordAndUsage(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	err := s.Record(ctx, CallRecord{
-		ID:           "call-1",
-		SessionID:    "sess-1",
-		Timestamp:    time.Now(),
-		Provider:     "anthropic",
-		Model:        "claude-sonnet-4-20250514",
-		InputTokens:  1000,
-		OutputTokens: 500,
-		LatencyMs:    250,
-		Status:       "ok",
+	s.Record(ctx, CallRecord{
+		ID: "c1", SessionID: "s1",
+		Provider: "anthropic", Model: "m",
+		InputTokens: 1000, OutputTokens: 500, LatencyMs: 250,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = s.Record(ctx, CallRecord{
-		ID:           "call-2",
-		SessionID:    "sess-1",
-		Timestamp:    time.Now(),
-		Provider:     "anthropic",
-		Model:        "claude-sonnet-4-20250514",
-		InputTokens:  2000,
-		OutputTokens: 1000,
-		LatencyMs:    300,
-		Status:       "ok",
+	s.Record(ctx, CallRecord{
+		ID: "c2", SessionID: "s1",
+		Provider: "anthropic", Model: "m",
+		InputTokens: 2000, OutputTokens: 1000, LatencyMs: 300,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	u, err := s.TodayUsage(ctx)
+	since := time.Now().UTC().Truncate(24 * time.Hour)
+	u, err := s.Usage(ctx, since)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,41 +49,80 @@ func TestRecordAndTodayUsage(t *testing.T) {
 	}
 }
 
-func TestTodayUsageEmpty(t *testing.T) {
+func TestUsageEmpty(t *testing.T) {
 	s := newTestStore(t)
-	u, err := s.TodayUsage(context.Background())
+	since := time.Now().UTC().Truncate(24 * time.Hour)
+	u, err := s.Usage(context.Background(), since)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u.CallCount != 0 {
-		t.Errorf("CallCount = %d, want 0 for empty db", u.CallCount)
+		t.Errorf("CallCount = %d, want 0", u.CallCount)
 	}
 }
 
-func TestSummary(t *testing.T) {
+func TestTryAcquireLifecycle(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	now := time.Now().UTC()
-	yesterday := now.Add(-24 * time.Hour)
+	s.Enqueue(ctx, "q1", "s1", "anthropic", "m")
 
-	s.Record(ctx, CallRecord{
-		ID: "c1", SessionID: "s1", Timestamp: yesterday,
-		Provider: "anthropic", Model: "m", InputTokens: 100, OutputTokens: 50,
-		LatencyMs: 10, Status: "ok",
-	})
-	s.Record(ctx, CallRecord{
-		ID: "c2", SessionID: "s1", Timestamp: now,
-		Provider: "anthropic", Model: "m", InputTokens: 200, OutputTokens: 100,
-		LatencyMs: 20, Status: "ok",
-	})
-
-	days, err := s.Summary(ctx, yesterday.Add(-time.Hour))
+	// Should acquire — nothing running.
+	ok, err := s.TryAcquire(ctx, "q1", "anthropic", 2, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(days) < 1 {
-		t.Fatal("expected at least 1 day in summary")
+	if !ok {
+		t.Fatal("TryAcquire should succeed with nothing running")
+	}
+
+	// Enqueue another for same provider — should fail (per-provider limit 1).
+	s.Enqueue(ctx, "q2", "s1", "anthropic", "m")
+	ok, _ = s.TryAcquire(ctx, "q2", "anthropic", 2, 1)
+	if ok {
+		t.Fatal("TryAcquire should fail — per-provider limit reached")
+	}
+
+	// Complete q1 — now q2 should acquire.
+	s.Complete(ctx, "q1", CallRecord{InputTokens: 100, OutputTokens: 50, LatencyMs: 10})
+	ok, _ = s.TryAcquire(ctx, "q2", "anthropic", 2, 1)
+	if !ok {
+		t.Fatal("TryAcquire should succeed after q1 completed")
+	}
+}
+
+func TestTryAcquireGlobalLimit(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Two different providers, global limit 1.
+	s.Enqueue(ctx, "a1", "s1", "anthropic", "m")
+	s.Enqueue(ctx, "b1", "s1", "openrouter", "m")
+
+	ok, _ := s.TryAcquire(ctx, "a1", "anthropic", 1, 5)
+	if !ok {
+		t.Fatal("first acquire should succeed")
+	}
+
+	ok, _ = s.TryAcquire(ctx, "b1", "openrouter", 1, 5)
+	if ok {
+		t.Fatal("second acquire should fail — global limit 1")
+	}
+}
+
+func TestFail(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	s.Enqueue(ctx, "f1", "s1", "anthropic", "m")
+	s.TryAcquire(ctx, "f1", "anthropic", 5, 5)
+	s.Fail(ctx, "f1", "connection timeout")
+
+	// Should be able to acquire again (f1 no longer running).
+	s.Enqueue(ctx, "f2", "s1", "anthropic", "m")
+	ok, _ := s.TryAcquire(ctx, "f2", "anthropic", 5, 1)
+	if !ok {
+		t.Fatal("TryAcquire should succeed after f1 failed")
 	}
 }
 
@@ -113,7 +134,6 @@ func TestSchemaIdempotent(t *testing.T) {
 	}
 	s1.Close()
 
-	// Opening again should not fail (CREATE IF NOT EXISTS).
 	s2, err := NewStore(path)
 	if err != nil {
 		t.Fatal("second open failed:", err)
@@ -137,18 +157,14 @@ func TestDefaultToolCalls(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	// Record with empty ToolCalls — should default to "[]".
-	err := s.Record(ctx, CallRecord{
-		ID: "c1", SessionID: "s1", Timestamp: time.Now(),
-		Provider: "anthropic", Model: "m", InputTokens: 100, OutputTokens: 50,
-		LatencyMs: 10, Status: "ok",
+	s.Record(ctx, CallRecord{
+		ID: "c1", SessionID: "s1",
+		Provider: "anthropic", Model: "m",
+		InputTokens: 100, OutputTokens: 50, LatencyMs: 10,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	var tc string
-	err = s.db.QueryRow("SELECT tool_calls FROM calls WHERE id = 'c1'").Scan(&tc)
+	err := s.db.QueryRow("SELECT tool_calls FROM calls WHERE id = 'c1'").Scan(&tc)
 	if err != nil {
 		t.Fatal(err)
 	}

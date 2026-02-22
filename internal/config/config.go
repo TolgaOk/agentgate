@@ -14,9 +14,8 @@ type Config struct {
 	Model        string   `toml:"model"`
 	MaxTokens    int      `toml:"max_tokens"`
 	Timeout      Duration `toml:"timeout"`
-	RateLimitRPM int      `toml:"rate_limit_rpm"`
-	RateLimitTPM int      `toml:"rate_limit_tpm"`
-	BudgetDaily  float64  `toml:"budget_daily_usd"`
+	ConcurrentGlobalLimit      int `toml:"concurrent_global_limit"`
+	ConcurrentPerProviderLimit int `toml:"concurrent_per_provider_limit"`
 }
 
 // Duration wraps time.Duration for TOML unmarshaling (e.g. "120s").
@@ -41,9 +40,8 @@ func Defaults() Config {
 		Model:        "claude-sonnet-4-6",
 		MaxTokens:    8192,
 		Timeout:      Duration{120 * time.Second},
-		RateLimitRPM: 50,
-		RateLimitTPM: 80000,
-		BudgetDaily:  10.0,
+		ConcurrentGlobalLimit:      3,
+		ConcurrentPerProviderLimit: 1,
 	}
 }
 

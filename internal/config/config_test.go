@@ -17,9 +17,8 @@ provider = "openai"
 model = "gpt-4o"
 max_tokens = 4096
 timeout = "60s"
-rate_limit_rpm = 30
-rate_limit_tpm = 40000
-budget_daily_usd = 5.0
+concurrent_global_limit = 5
+concurrent_per_provider_limit = 2
 `), 0644)
 
 	cfg, err := Load(path)
@@ -28,13 +27,12 @@ budget_daily_usd = 5.0
 	}
 
 	want := Config{
-		Provider:     "openai",
-		Model:        "gpt-4o",
-		MaxTokens:    4096,
-		Timeout:      Duration{60 * time.Second},
-		RateLimitRPM: 30,
-		RateLimitTPM: 40000,
-		BudgetDaily:  5.0,
+		Provider:    "openai",
+		Model:       "gpt-4o",
+		MaxTokens:                  4096,
+		Timeout:                    Duration{60 * time.Second},
+		ConcurrentGlobalLimit:      5,
+		ConcurrentPerProviderLimit: 2,
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Errorf("Load() mismatch (-want +got):\n%s", diff)

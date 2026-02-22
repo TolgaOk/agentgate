@@ -11,7 +11,6 @@ import (
 	"time"
 
 	agexec "github.com/TolgaOk/agentgate/internal/exec"
-	"github.com/TolgaOk/agentgate/internal/metrics"
 	"github.com/TolgaOk/agentgate/internal/policy"
 	"github.com/TolgaOk/agentgate/internal/provider"
 )
@@ -23,8 +22,7 @@ const (
 	ExitOK      = 0
 	ExitAgent   = 1 // agent loop error (max steps, stream error)
 	ExitUsage   = 2 // bad config, missing args
-	ExitBudget  = 3 // budget exceeded
-	ExitTimeout = 4 // context deadline / timeout
+	ExitTimeout = 3 // context deadline / timeout
 )
 
 // Status returns a machine-readable status string and exit code for the given error.
@@ -35,9 +33,6 @@ func Status(err error) (string, int) {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return "timeout", ExitTimeout
 	}
-	if strings.Contains(err.Error(), "budget") {
-		return "budget", ExitBudget
-	}
 	return "error", ExitAgent
 }
 
@@ -45,7 +40,6 @@ type Agent struct {
 	Provider     provider.Provider
 	ProviderName string
 	Policy       policy.Policy
-	Metrics      *metrics.Store
 	Model        string
 	SystemPrompt string
 	MaxTokens    int
@@ -118,20 +112,6 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 		totalUsage.OutputTokens += stepUsage.OutputTokens
 		latency := time.Since(start)
 
-		// Record metrics.
-		if a.Metrics != nil {
-			a.Metrics.Record(ctx, metrics.CallRecord{
-				ID:           fmt.Sprintf("step-%d-%d", step, time.Now().UnixMilli()),
-				SessionID:    a.SessionID,
-				Timestamp:    time.Now(),
-				Provider:     a.ProviderName,
-				Model:        a.Model,
-				InputTokens:  stepUsage.InputTokens,
-				OutputTokens: stepUsage.OutputTokens,
-				LatencyMs:    latency.Milliseconds(),
-				Status:       "ok",
-			})
-		}
 
 		// Append assistant message with metadata.
 		messages = append(messages, provider.Message{
