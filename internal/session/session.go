@@ -52,6 +52,35 @@ func New(dir, model string) (*Session, error) {
 	}, nil
 }
 
+// NewAt creates a new session file at the given exact path.
+func NewAt(path, model string) (*Session, error) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("session: mkdir: %w", err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("session: create: %w", err)
+	}
+
+	header := Header{Model: model}
+	if err := writeJSONLine(f, header); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("session: write header: %w", err)
+	}
+
+	base := filepath.Base(path)
+	id := base[:len(base)-len(filepath.Ext(base))]
+
+	return &Session{
+		ID:       id,
+		FilePath: path,
+		Model:    model,
+		file:     f,
+	}, nil
+}
+
 // Open parses an existing session file and reopens it for appending.
 func Open(path string) (*Session, error) {
 	f, err := os.Open(path)

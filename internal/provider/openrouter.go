@@ -147,6 +147,21 @@ func toORMsg(m Message) orMsg {
 	return orMsg{Role: string(m.Role), Content: m.Content}
 }
 
+// parseOpenRouterError extracts a human-readable message from an OpenRouter API error response.
+// Format: {"error":{"message":"...","code":...}}
+// Falls back to raw body if parsing fails.
+func parseOpenRouterError(statusCode int, body []byte) error {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.Error.Message != "" {
+		return fmt.Errorf("openrouter: %s (HTTP %d)", envelope.Error.Message, statusCode)
+	}
+	return fmt.Errorf("openrouter: HTTP %d: %s", statusCode, body)
+}
+
 // --- Chat (non-streaming) ---
 
 func (o *OpenRouter) Chat(ctx context.Context, req Request) (Response, error) {
@@ -174,7 +189,7 @@ func (o *OpenRouter) Chat(ctx context.Context, req Request) (Response, error) {
 	}
 
 	if httpResp.StatusCode != 200 {
-		return Response{}, fmt.Errorf("openrouter: HTTP %d: %s", httpResp.StatusCode, respBody)
+		return Response{}, parseOpenRouterError(httpResp.StatusCode, respBody)
 	}
 
 	var or orResponse
@@ -231,7 +246,7 @@ func (o *OpenRouter) ChatStream(ctx context.Context, req Request) (<-chan Stream
 	if httpResp.StatusCode != 200 {
 		defer httpResp.Body.Close()
 		respBody, _ := io.ReadAll(httpResp.Body)
-		return nil, fmt.Errorf("openrouter: HTTP %d: %s", httpResp.StatusCode, respBody)
+		return nil, parseOpenRouterError(httpResp.StatusCode, respBody)
 	}
 
 	ch := make(chan StreamChunk, 16)

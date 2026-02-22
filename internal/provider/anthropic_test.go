@@ -242,6 +242,48 @@ data: {"type":"message_stop"}
 	}
 }
 
+func TestParseAnthropicError(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{
+			name:   "valid error",
+			status: 401,
+			body:   `{"type":"error","error":{"type":"authentication_error","message":"Invalid API key"}}`,
+			want:   "anthropic: Invalid API key (HTTP 401)",
+		},
+		{
+			name:   "rate limit",
+			status: 429,
+			body:   `{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}`,
+			want:   "anthropic: Rate limit exceeded (HTTP 429)",
+		},
+		{
+			name:   "unparseable body",
+			status: 500,
+			body:   `not json at all`,
+			want:   "anthropic: HTTP 500: not json at all",
+		},
+		{
+			name:   "empty message field",
+			status: 400,
+			body:   `{"type":"error","error":{"type":"bad_request"}}`,
+			want:   `anthropic: HTTP 400: {"type":"error","error":{"type":"bad_request"}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := parseAnthropicError(tt.status, []byte(tt.body))
+			if err.Error() != tt.want {
+				t.Errorf("got %q, want %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
 func join(ss []string) string {
 	result := ""
 	for _, s := range ss {

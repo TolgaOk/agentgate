@@ -203,6 +203,39 @@ func TestOpen_AppendMore(t *testing.T) {
 	}
 }
 
+func TestNewAt_CreatesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "my-session.jsonl")
+	s, err := NewAt(path, "test-model")
+	if err != nil {
+		t.Fatalf("NewAt: %v", err)
+	}
+	defer s.Close()
+
+	if s.FilePath != path {
+		t.Errorf("FilePath = %q, want %q", s.FilePath, path)
+	}
+	if s.ID != "my-session" {
+		t.Errorf("ID = %q, want %q", s.ID, "my-session")
+	}
+	if s.Model != "test-model" {
+		t.Errorf("Model = %q", s.Model)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("file not created: %v", err)
+	}
+
+	// Verify round-trip.
+	s.Close()
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s2.Close()
+	if s2.Model != "test-model" {
+		t.Errorf("reopened Model = %q", s2.Model)
+	}
+}
+
 func TestNew_CreatesSubdirs(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a", "b", "c")
 	s, err := New(dir, "test")

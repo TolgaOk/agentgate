@@ -15,7 +15,6 @@ import (
 	"github.com/TolgaOk/agentgate/internal/provider"
 )
 
-const maxSteps = 20
 
 // Exit codes for structured error reporting.
 const (
@@ -43,6 +42,7 @@ type Agent struct {
 	Model        string
 	SystemPrompt string
 	MaxTokens    int
+	MaxSteps     int
 	SessionID    string
 	Out          io.Writer
 }
@@ -70,7 +70,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string) (string, provider.U
 func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (string, provider.Usage, []provider.Message, error) {
 	var totalUsage provider.Usage
 
-	for step := range maxSteps {
+	for step := range a.MaxSteps {
 		req := provider.Request{
 			SystemPrompt: a.SystemPrompt,
 			Messages:     messages,
@@ -149,7 +149,7 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 		}
 	}
 
-	return "", totalUsage, messages, fmt.Errorf("agent: exceeded max steps (%d)", maxSteps)
+	return "", totalUsage, messages, fmt.Errorf("agent: exceeded max steps (%d)", a.MaxSteps)
 }
 
 func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.ToolResult {

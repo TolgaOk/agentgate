@@ -14,6 +14,7 @@ type Config struct {
 	Model        string   `toml:"model"`
 	MaxTokens    int      `toml:"max_tokens"`
 	Timeout      Duration `toml:"timeout"`
+	MaxSteps                   int `toml:"max_steps"`
 	ConcurrentGlobalLimit      int `toml:"concurrent_global_limit"`
 	ConcurrentPerProviderLimit int `toml:"concurrent_per_provider_limit"`
 }
@@ -36,9 +37,10 @@ func (d Duration) MarshalText() ([]byte, error) {
 // Defaults returns a Config with sensible defaults.
 func Defaults() Config {
 	return Config{
-		Provider:     "anthropic",
-		Model:        "claude-sonnet-4-6",
+		Provider:     "openai",
+		Model:        "gpt-5.2",
 		MaxTokens:    8192,
+		MaxSteps:     20,
 		Timeout:      Duration{120 * time.Second},
 		ConcurrentGlobalLimit:      3,
 		ConcurrentPerProviderLimit: 1,

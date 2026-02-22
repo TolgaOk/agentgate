@@ -163,6 +163,21 @@ func parseAnthropicResponse(ar anthropicResponse) Response {
 	return resp
 }
 
+// parseAnthropicError extracts a human-readable message from an Anthropic API error response.
+// Format: {"type":"error","error":{"type":"...","message":"..."}}
+// Falls back to raw body if parsing fails.
+func parseAnthropicError(statusCode int, body []byte) error {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) == nil && envelope.Error.Message != "" {
+		return fmt.Errorf("anthropic: %s (HTTP %d)", envelope.Error.Message, statusCode)
+	}
+	return fmt.Errorf("anthropic: HTTP %d: %s", statusCode, body)
+}
+
 // --- Chat (non-streaming) ---
 
 func (a *Anthropic) Chat(ctx context.Context, req Request) (Response, error) {
@@ -190,7 +205,7 @@ func (a *Anthropic) Chat(ctx context.Context, req Request) (Response, error) {
 	}
 
 	if httpResp.StatusCode != 200 {
-		return Response{}, fmt.Errorf("anthropic: HTTP %d: %s", httpResp.StatusCode, respBody)
+		return Response{}, parseAnthropicError(httpResp.StatusCode, respBody)
 	}
 
 	var ar2 anthropicResponse
@@ -225,7 +240,7 @@ func (a *Anthropic) ChatStream(ctx context.Context, req Request) (<-chan StreamC
 	if httpResp.StatusCode != 200 {
 		defer httpResp.Body.Close()
 		respBody, _ := io.ReadAll(httpResp.Body)
-		return nil, fmt.Errorf("anthropic: HTTP %d: %s", httpResp.StatusCode, respBody)
+		return nil, parseAnthropicError(httpResp.StatusCode, respBody)
 	}
 
 	ch := make(chan StreamChunk, 16)
