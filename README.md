@@ -1,35 +1,35 @@
-# ag
+# AgentGAte (`aga`)
 
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![v0.1.0-alpha](https://img.shields.io/badge/v0.1.0--alpha-orange)]()
 
 LLM agent hub with tool execution, rate limiting, and context persistence. Designed for agentic (by agents) usage and to serve as the backend for agentic workflows.
 
-> **Philosophy**: A tool is a `CLI` + `Skill.md`.
+> **Philosophy**: Extend the tools by adding `Skill.md` with a `CLI`.
 
 ## Install
 
 ```
-go install github.com/TolgaOk/agentgate/cmd/ag@latest
+go install github.com/TolgaOk/agentgate/cmd/aga@latest
 ```
 
 ## Usage
 
 ```bash
-ag ask "What files are in this directory?"           # create conversation
-ag ask --jeon "summarize this project"               # JSON output (for agentic call)
-ag ask --context /tmp/session.jsonl "now fix it"     # continue a conversation
-ag ask --skill ./skills "say hi in whatsapp"         # with custom skill directory
+aga ask "What files are in this directory?"           # create conversation
+aga ask --json "summarize this project"               # JSON output (for agentic call)
+aga ask --context /tmp/session.json  "now fix it"     # continue a conversation
+aga ask --skill ./skills "say hi in whatsapp"         # with custom skill directory
 
-ag auth openai                                       # sign in with ChatGPT (subscription)
-ag auth status                                       # check token status
+aga auth openai                                       # sign in with ChatGPT (subscription)
+aga auth status                                       # check token status
 ```
 
 ## How it works
 
 ```
 ┌──────────┐   ┌────────────┐   ┌─────────┐   ┌──────────┐   ┌────────────┐
-│ ag ask   │──▶│ Agent Loop │──▶│ LLM API │──▶│  tool    │──▶│ output +   │
+│ aga ask  │──▶│ Agent Loop │──▶│ LLM API │──▶│  tool    │──▶│ output +   │
 │ "prompt" │   │ (≤n steps) │   │ (stream)│   │ execute  │   │ stdout +   │
 └────┬─────┘   └─────┬──────┘   └─────────┘   └──────────┘   │ context    │
      │               │                                       └────────────┘
@@ -41,7 +41,7 @@ ag auth status                                       # check token status
 ## Providers
 
 - `openai`
-  - Subscription: `ag auth openai` (primary)
+  - Subscription: `aga auth openai` (primary)
   - API key: `OPENAI_API_KEY` (fallback)
 - `anthropic` (subscription is not available)
   - API key: `ANTHROPIC_API_KEY`
@@ -52,11 +52,13 @@ ag auth status                                       # check token status
 
 ```
 ~/.config/agentgate/
-  config.toml       # provider, model, limits
+  config.toml       
   system.md         # system prompt
   tokens.json       # OAuth tokens (auto-managed)
   skills/           # skill files (markdown)
 ```
+
+`config.toml`
 
 ```toml
 provider = "openai"
