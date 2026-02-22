@@ -1,10 +1,11 @@
-# AgentGate Hub
+# ag
 
-> v0.1.0-alpha
+[![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![v0.1.0-alpha](https://img.shields.io/badge/v0.1.0--alpha-orange)]()
 
-Go-based LLM agent hub. Runs an agentic loop with tool execution (bash), rate limiting, policy enforcement, and conversation context persistence.
+LLM agent hub with tool execution, rate limiting, and context persistence. Designed for agentic (by agents) usage and to serve as the backend for agentic workflows.
 
-> Tools are extended via skill files (markdown) that teach the agent how to use specific CLIs.
+> **Philosophy**: A tool is a `CLI` + `Skill.md`.
 
 ## Install
 
@@ -15,45 +16,54 @@ go install github.com/TolgaOk/agentgate/cmd/ag@latest
 ## Usage
 
 ```bash
-# Run a prompt
-ag ask "What files are in this directory?"
+ag ask "What files are in this directory?"           # create conversation
+ag ask --jeon "summarize this project"               # JSON output (for agentic call)
+ag ask --context /tmp/session.jsonl "now fix it"     # continue a conversation
+ag ask --skill ./skills "say hi in whatsapp"         # with custom skill directory
 
-# JSON output
-ag ask --json "summarize this project"
-
-# Continue a conversation
-ag ask --context /tmp/agentgate/2026-02-22_00-18-59.jsonl "now fix it"
-
-# Pipe input
-echo "explain this" | ag ask
+ag auth openai                                       # sign in with ChatGPT (subscription)
+ag auth status                                       # check token status
 ```
 
-Every call saves conversation context to a JSONL file (in `$TMPDIR/agentgate/` by default). Pass `--context` to load and extend an existing conversation.
+## How it works
+
+```
+┌──────────┐   ┌────────────┐   ┌─────────┐   ┌──────────┐   ┌────────────┐
+│ ag ask   │──▶│ Agent Loop │──▶│ LLM API │──▶│  tool    │──▶│ output +   │
+│ "prompt" │   │ (≤n steps) │   │ (stream)│   │ execute  │   │ stdout +   │
+└────┬─────┘   └─────┬──────┘   └─────────┘   └──────────┘   │ context    │
+     │               │                                       └────────────┘
+┌────▼─────┐   ┌─────▼──────┐
+│ context  │   │  SQLite    │ ◀── concurrency limits, usage tracking
+└──────────┘   └────────────┘
+```
+
+## Providers
+
+- `openai`
+  - Subscription: `ag auth openai` (primary)
+  - API key: `OPENAI_API_KEY` (fallback)
+- `anthropic` (subscription is not available)
+  - API key: `ANTHROPIC_API_KEY`
+- `openrouter`
+  - API key: `OPENROUTER_API_KEY`
 
 ## Configuration
 
 ```
 ~/.config/agentgate/
   config.toml       # provider, model, limits
-  policy.toml       # command blocking rules
   system.md         # system prompt
+  tokens.json       # OAuth tokens (auto-managed)
   skills/           # skill files (markdown)
 ```
 
-`config.toml`:
-
 ```toml
-provider = "anthropic"          # "anthropic" or "openrouter"
-model = "claude-sonnet-4-6"     # model ID (provider-specific)
+provider = "openai"
+model = "gpt-5.2"
 max_tokens = 8192
-rate_limit_rpm = 50
+max_steps = 20
+timeout = "120s"
+concurrent_global_limit = 3
+concurrent_per_provider_limit = 1
 ```
-
-**Environment Variables**
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Required for Anthropic provider |
-| `OPENROUTER_API_KEY` | Required for OpenRouter provider |
-| `AG_PROVIDER` | Override provider (overrides config) |
-| `AG_MODEL` | Override model (overrides config) |

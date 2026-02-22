@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/TolgaOk/agentgate/internal/agent"
+	"github.com/TolgaOk/agentgate/internal/auth"
 	"github.com/TolgaOk/agentgate/internal/config"
 	"github.com/TolgaOk/agentgate/internal/metrics"
 	"github.com/TolgaOk/agentgate/internal/policy"
@@ -33,9 +34,10 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:     "ag",
-		Short:   "AgentGate Hub",
-		Version: "0.1.0-alpha",
+		Use:                "ag",
+		Short:              "AgentGate Hub",
+		Version:            "0.1.0-alpha",
+		CompletionOptions:  cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 
 	askCmd := &cobra.Command{
@@ -62,7 +64,25 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(askCmd, metricsCmd)
+	authCmd := &cobra.Command{
+		Use:   "auth",
+		Short: "Manage provider authentication",
+	}
+
+	authOpenAICmd := &cobra.Command{
+		Use:   "openai",
+		Short: "Authenticate with OpenAI via OAuth (Sign in with ChatGPT)",
+		RunE:  runAuthOpenAI,
+	}
+
+	authStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show authentication status for all providers",
+		RunE:  runAuthStatus,
+	}
+
+	authCmd.AddCommand(authOpenAICmd, authStatusCmd)
+	rootCmd.AddCommand(askCmd, metricsCmd, authCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -150,19 +170,35 @@ func runAsk(cmd *cobra.Command, args []string) error {
 
 	// Open or create context file.
 	var sess *session.Session
+	var contextStatus string
+	modelTag := e.cfg.Provider + "/" + e.cfg.Model
 	if contextFile != "" {
-		sess, err = session.Open(contextFile)
-		if err != nil {
-			fatal(err)
+		if _, statErr := os.Stat(contextFile); statErr == nil {
+			sess, err = session.Open(contextFile)
+			if err != nil {
+				fatal(err)
+			}
+			contextStatus = "context: " + sess.FilePath
+		} else {
+			sess, err = session.NewAt(contextFile, modelTag)
+			if err != nil {
+				fatal(err)
+			}
+			contextStatus = "context created: " + sess.FilePath
 		}
 	} else {
 		ctxDir := filepath.Join(os.TempDir(), "agentgate")
-		sess, err = session.New(ctxDir, e.cfg.Provider+"/"+e.cfg.Model)
+		sess, err = session.New(ctxDir, modelTag)
 		if err != nil {
 			fatal(err)
 		}
+		contextStatus = "context: " + sess.FilePath
 	}
 	defer sess.Close()
+
+	if !jsonMode {
+		fmt.Fprintln(os.Stderr, styleDim.Render(contextStatus))
+	}
 
 	if sessionID == "" {
 		sessionID = sess.ID
@@ -198,6 +234,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		Model:        e.cfg.Model,
 		SystemPrompt: sysPrompt,
 		MaxTokens:    maxTokens,
+		MaxSteps:     e.cfg.MaxSteps,
 		SessionID:    sessionID,
 		Out:          out,
 	}
@@ -226,7 +263,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		})
 	} else {
 		fmt.Fprintf(os.Stderr, "\n%s\n",
-			styleDim.Render(fmt.Sprintf("tokens: %d in / %d out  context: %s", usage.InputTokens, usage.OutputTokens, sess.FilePath)))
+			styleDim.Render(fmt.Sprintf("tokens: %d in / %d out", usage.InputTokens, usage.OutputTokens)))
 	}
 
 	return nil
@@ -280,18 +317,123 @@ func setupEnv() (*env, error) {
 
 func newProvider(cfg config.Config) (provider.Provider, error) {
 	apiKey := cfg.APIKey()
+	oauthToken := false
+
+	// For OpenAI, prefer subscription token (free via ChatGPT account)
+	// over API key. Fall back to API key if no OAuth token exists.
+	if cfg.Provider == "openai" {
+		tok, err := loadOpenAIToken()
+		if err == nil && tok != "" {
+			apiKey = tok
+			oauthToken = true
+		}
+	}
+
 	if apiKey == "" {
-		return nil, fmt.Errorf("env var %s is not set", cfg.APIKeyEnvVar())
+		envHint := cfg.APIKeyEnvVar()
+		if cfg.Provider == "openai" {
+			return nil, fmt.Errorf("env var %s is not set and no OAuth token found (run: ag auth openai)", envHint)
+		}
+		return nil, fmt.Errorf("env var %s is not set", envHint)
 	}
 
 	switch cfg.Provider {
 	case "anthropic":
+		if strings.HasPrefix(apiKey, "sk-ant-oat") {
+			return provider.NewAnthropicBearer(apiKey, cfg.Model, cfg.MaxTokens), nil
+		}
 		return provider.NewAnthropic(apiKey, cfg.Model, cfg.MaxTokens), nil
+	case "openai":
+		baseURL := provider.OpenAIResponsesAPI
+		if oauthToken {
+			baseURL = provider.CodexResponsesAPI
+		}
+		return provider.NewOpenAI(apiKey, baseURL, cfg.Model, cfg.MaxTokens), nil
 	case "openrouter":
 		return provider.NewOpenRouter(apiKey, cfg.Model, cfg.MaxTokens), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", cfg.Provider)
 	}
+}
+
+// loadOpenAIToken loads and auto-refreshes the OpenAI OAuth token.
+func loadOpenAIToken() (string, error) {
+	store, err := auth.LoadStore()
+	if err != nil {
+		return "", err
+	}
+	tok := store.Get("openai")
+	if tok == nil {
+		return "", fmt.Errorf("no openai token")
+	}
+
+	if tok.Expired() {
+		if tok.RefreshToken == "" {
+			return "", fmt.Errorf("openai token expired and no refresh token")
+		}
+		cfg := auth.OpenAIOAuth()
+		newTok, err := auth.RefreshAccessToken(context.Background(), cfg, tok.RefreshToken)
+		if err != nil {
+			return "", fmt.Errorf("openai token refresh: %w", err)
+		}
+		if err := store.Set("openai", newTok); err != nil {
+			return "", fmt.Errorf("save refreshed token: %w", err)
+		}
+		return newTok.AccessToken, nil
+	}
+
+	return tok.AccessToken, nil
+}
+
+func runAuthOpenAI(cmd *cobra.Command, args []string) error {
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	cfg := auth.OpenAIOAuth()
+	tok, err := auth.RunOAuthFlow(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("auth openai: %w", err)
+	}
+
+	store, err := auth.LoadStore()
+	if err != nil {
+		return fmt.Errorf("auth openai: %w", err)
+	}
+	if err := store.Set("openai", tok); err != nil {
+		return fmt.Errorf("auth openai: %w", err)
+	}
+
+	fmt.Println("OpenAI authentication successful!")
+	fmt.Printf("Token expires: %s\n", tok.ExpiresAt.Format(time.RFC3339))
+	return nil
+}
+
+func runAuthStatus(cmd *cobra.Command, args []string) error {
+	store, err := auth.LoadStore()
+	if err != nil {
+		return fmt.Errorf("auth status: %w", err)
+	}
+
+	providers := store.Providers()
+	if len(providers) == 0 {
+		fmt.Println("No OAuth tokens stored.")
+		fmt.Println("Run 'ag auth openai' to authenticate with OpenAI.")
+		return nil
+	}
+
+	for _, name := range providers {
+		tok := store.Get(name)
+		status := "valid"
+		if tok.Expired() {
+			if tok.RefreshToken != "" {
+				status = "expired (has refresh token)"
+			} else {
+				status = "expired"
+			}
+		}
+		fmt.Printf("%-12s %s  (expires %s)\n", name, status, tok.ExpiresAt.Format(time.RFC3339))
+	}
+	return nil
 }
 
 func loadSkillDir(dir string) (string, error) {
