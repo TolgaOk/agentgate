@@ -3,7 +3,7 @@
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![v0.1.0-alpha](https://img.shields.io/badge/v0.1.0--alpha-orange)]()
 
-LLM agent hub with tool execution, rate limiting, and context persistence. Designed for agentic (by agents) usage and to serve as the backend for agentic workflows.
+LLM agent hub with tool execution, rate limiting, and context persistence. Designed for agentic usage (by agents) and to serve as the backend for agentic workflows.
 
 > **Philosophy**: Extend the tools by adding `Skill.md` with a `CLI`.
 
