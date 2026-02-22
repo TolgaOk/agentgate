@@ -33,8 +33,9 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "ag",
-		Short: "AgentGate Hub",
+		Use:     "ag",
+		Short:   "AgentGate Hub",
+		Version: "0.1.0-alpha",
 	}
 
 	askCmd := &cobra.Command{

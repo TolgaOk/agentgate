@@ -1,12 +1,10 @@
 # AgentGate Hub
 
-Go-based LLM agent hub. Runs an agentic loop with tool execution (bash), rate limiting, policy enforcement, and session persistence.
+> v0.1.0-alpha
 
-> Tools are extended via skills located as markdown files at (`~/.config/agentgate/skills/`) that teach the agent how to use specific CLIs.
+Go-based LLM agent hub. Runs an agentic loop with tool execution (bash), rate limiting, policy enforcement, and conversation context persistence.
 
-**Sessions**
-
-Sessions persist the full conversation (messages, tool calls, results, metadata) as JSONL files. On resume, the file is loaded and sent as conversation history — the LLM picks up where it left off.
+> Tools are extended via skill files (markdown) that teach the agent how to use specific CLIs.
 
 ## Install
 
@@ -17,16 +15,20 @@ go install github.com/TolgaOk/agentgate/cmd/ag@latest
 ## Usage
 
 ```bash
-# Singleton prompt
+# Run a prompt
 ag ask "What files are in this directory?"
 
-# Interactive sessions
-ag session
-ag session --resume <id>
-ag session list
+# JSON output
+ag ask --json "summarize this project"
+
+# Continue a conversation
+ag ask --context /tmp/agentgate/2026-02-22_00-18-59.jsonl "now fix it"
+
+# Pipe input
+echo "explain this" | ag ask
 ```
 
-Sessions are stored in `~/.local/share/agentgate/sessions/` by default (override with `--dir`).
+Every call saves conversation context to a JSONL file (in `$TMPDIR/agentgate/` by default). Pass `--context` to load and extend an existing conversation.
 
 ## Configuration
 
