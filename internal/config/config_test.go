@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -27,10 +26,10 @@ concurrent_per_provider_limit = 2
 	}
 
 	want := Config{
-		Provider:    "openai",
-		Model:       "gpt-4o",
+		Provider:                   "openai",
+		Model:                      "gpt-4o",
 		MaxTokens:                  4096,
-		Timeout:                    Duration{60 * time.Second},
+		MaxSteps:                   20,
 		ConcurrentGlobalLimit:      5,
 		ConcurrentPerProviderLimit: 2,
 	}
@@ -54,9 +53,6 @@ func TestDefaultsApplied(t *testing.T) {
 	}
 	if cfg.MaxTokens != 8192 {
 		t.Errorf("MaxTokens = %d, want 8192 (default)", cfg.MaxTokens)
-	}
-	if cfg.Timeout.Duration != 120*time.Second {
-		t.Errorf("Timeout = %v, want 120s (default)", cfg.Timeout)
 	}
 }
 
@@ -109,6 +105,7 @@ func TestValidate(t *testing.T) {
 	}{
 		{
 			name:    "valid",
+			modify:  func(c *Config) { c.Provider = "anthropic" },
 			setEnv:  map[string]string{"ANTHROPIC_API_KEY": "test-key"},
 			wantErr: false,
 		},
@@ -119,17 +116,12 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "api key not set",
+			modify:  func(c *Config) { c.Provider = "anthropic" },
 			wantErr: true,
 		},
 		{
 			name:    "zero max_tokens",
 			modify:  func(c *Config) { c.MaxTokens = 0 },
-			setEnv:  map[string]string{"ANTHROPIC_API_KEY": "test-key"},
-			wantErr: true,
-		},
-		{
-			name:    "zero timeout",
-			modify:  func(c *Config) { c.Timeout = Duration{0} },
 			setEnv:  map[string]string{"ANTHROPIC_API_KEY": "test-key"},
 			wantErr: true,
 		},
@@ -159,17 +151,3 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-func TestDurationUnmarshal(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
-	os.WriteFile(path, []byte(`timeout = "5m30s"`), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := 5*time.Minute + 30*time.Second
-	if cfg.Timeout.Duration != want {
-		t.Errorf("Timeout = %v, want %v", cfg.Timeout.Duration, want)
-	}
-}

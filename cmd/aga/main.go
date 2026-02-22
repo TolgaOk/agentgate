@@ -47,22 +47,21 @@ func main() {
 		RunE:  runAsk,
 	}
 	askCmd.Flags().Bool("json", false, "JSON output to stdout")
-	askCmd.Flags().String("context", "", "Load and extend conversation context (JSONL)")
-	askCmd.Flags().String("model", "", "Override model")
-	askCmd.Flags().String("system-prompt", "", "Override system prompt file")
-	askCmd.Flags().String("skill", "", "Append .md files from dir to system prompt")
+	askCmd.Flags().String("context", "", "Path to conversation context file (JSONL); created if missing")
+	askCmd.Flags().String("model", "", "Override model name")
+	askCmd.Flags().String("system-prompt", "", "Path to system prompt file (.md)")
+	askCmd.Flags().String("skill", "", "Path to directory of .md skill files to append to system prompt")
 	askCmd.Flags().Int("max-tokens", 0, "Override max output tokens")
-	askCmd.Flags().Duration("timeout", 0, "Override command timeout (e.g. 30s)")
+	askCmd.Flags().Duration("timeout", 0, "Overall timeout for the entire operation (e.g. 30s, 2m)")
 	askCmd.Flags().String("session-id", "", "Tag this call for metrics tracking")
 	askCmd.Flags().String("render", "", "Render markdown: auto, dark, light, raw")
 
 	metricsCmd := &cobra.Command{
 		Use:   "metrics",
 		Short: "Show usage metrics",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("not implemented")
-		},
+		RunE:  runMetrics,
 	}
+	metricsCmd.Flags().String("since", "today", "Show usage since: today, 7d, 30d, or YYYY-MM-DD")
 
 	authCmd := &cobra.Command{
 		Use:   "auth",
@@ -91,15 +90,16 @@ func main() {
 
 func runAsk(cmd *cobra.Command, args []string) error {
 	// Build prompt from args or stdin.
+	// Only read stdin when no args were provided (avoids blocking on piped stdin with empty args).
 	userPrompt := strings.Join(args, " ")
-	if userPrompt == "" && stdinPiped() {
+	if len(args) == 0 && stdinPiped() {
 		data, err := io.ReadAll(os.Stdin)
 		if err == nil {
 			userPrompt = strings.TrimSpace(string(data))
 		}
 	}
 	if strings.TrimSpace(userPrompt) == "" {
-		return fmt.Errorf("usage: ag ask [flags] \"prompt\"")
+		return fmt.Errorf("usage: aga ask [flags] \"prompt\"")
 	}
 
 	jsonMode, _ := cmd.Flags().GetBool("json")
@@ -165,7 +165,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	}
 
 	if timeoutFlag > 0 {
-		e.pol.Timeout = timeoutFlag
+		e.pol.Timeout = timeoutFlag // also applies to tool execution
 	}
 
 	// Open or create context file.
@@ -206,6 +206,11 @@ func runAsk(cmd *cobra.Command, args []string) error {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	if timeoutFlag > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeoutFlag)
+		defer cancel()
+	}
 
 	// Append user prompt to context.
 	userMsg := provider.Message{
@@ -507,6 +512,60 @@ func dataDir() (string, error) {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, styleErr.Render("error: "+err.Error()))
 	os.Exit(1)
+}
+
+func runMetrics(cmd *cobra.Command, args []string) error {
+	sinceFlag, _ := cmd.Flags().GetString("since")
+
+	var since time.Time
+	now := time.Now()
+	switch sinceFlag {
+	case "today", "":
+		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	case "7d":
+		since = now.AddDate(0, 0, -7)
+	case "30d":
+		since = now.AddDate(0, 0, -30)
+	default:
+		t, err := time.Parse("2006-01-02", sinceFlag)
+		if err != nil {
+			return fmt.Errorf("invalid --since value %q (use: today, 7d, 30d, or YYYY-MM-DD)", sinceFlag)
+		}
+		since = t
+	}
+
+	metricsDir, err := dataDir()
+	if err != nil {
+		return err
+	}
+	store, err := metrics.NewStore(filepath.Join(metricsDir, "metrics.db"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	days, err := store.Summary(context.Background(), since)
+	if err != nil {
+		return err
+	}
+
+	if len(days) == 0 {
+		fmt.Println("No usage data.")
+		return nil
+	}
+
+	var totalIn, totalOut, totalCalls int
+	for _, d := range days {
+		fmt.Printf("%s  %6d in  %6d out  %3d calls\n", d.Date, d.InputTokens, d.OutputTokens, d.CallCount)
+		totalIn += d.InputTokens
+		totalOut += d.OutputTokens
+		totalCalls += d.CallCount
+	}
+	if len(days) > 1 {
+		fmt.Printf("%-10s %6d in  %6d out  %3d calls\n", "total", totalIn, totalOut, totalCalls)
+	}
+
+	return nil
 }
 
 type jsonResult struct {

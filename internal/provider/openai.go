@@ -191,9 +191,15 @@ func parseOpenAIError(statusCode int, body []byte) error {
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Detail string `json:"detail"`
 	}
-	if json.Unmarshal(body, &envelope) == nil && envelope.Error.Message != "" {
-		return fmt.Errorf("openai: %s (HTTP %d)", envelope.Error.Message, statusCode)
+	if json.Unmarshal(body, &envelope) == nil {
+		if envelope.Error.Message != "" {
+			return fmt.Errorf("openai: %s (HTTP %d)", envelope.Error.Message, statusCode)
+		}
+		if envelope.Detail != "" {
+			return fmt.Errorf("openai: %s (HTTP %d)", envelope.Detail, statusCode)
+		}
 	}
 	return fmt.Errorf("openai: HTTP %d: %s", statusCode, body)
 }
@@ -345,10 +351,13 @@ func (o *OpenAI) readStream(ctx context.Context, body io.ReadCloser, ch chan<- S
 				Arguments string `json:"arguments"`
 			}
 			if json.Unmarshal([]byte(data), &ev) == nil {
-				tc := ToolCall{Name: ev.Name}
-				// Use tracked call_id.
+				var tc ToolCall
 				if ts, ok := tools[ev.ItemID]; ok {
 					tc.ID = ts.callID
+					tc.Name = ts.name
+				}
+				if ev.Name != "" {
+					tc.Name = ev.Name
 				}
 				var args map[string]string
 				if json.Unmarshal([]byte(ev.Arguments), &args) == nil {

@@ -164,22 +164,22 @@ func (q *Queue) wrapStream(ctx context.Context, callID string, inner <-chan prov
 	return out
 }
 
-func (q *Queue) complete(ctx context.Context, callID string, inTok, outTok int, latencyMs int64) {
+func (q *Queue) complete(_ context.Context, callID string, inTok, outTok int, latencyMs int64) {
 	if q.store == nil {
 		return
 	}
-	q.store.Complete(ctx, callID, metrics.CallRecord{
+	q.store.Complete(context.Background(), callID, metrics.CallRecord{
 		InputTokens:  inTok,
 		OutputTokens: outTok,
 		LatencyMs:    latencyMs,
 	})
 }
 
-func (q *Queue) fail(ctx context.Context, callID, reason string) {
+func (q *Queue) fail(_ context.Context, callID, reason string) {
 	if q.store == nil {
 		return
 	}
-	q.store.Fail(ctx, callID, reason)
+	q.store.Fail(context.Background(), callID, reason)
 }
 
 func (q *Queue) callWithRetry(ctx context.Context, fn func() (any, error)) (any, error) {

@@ -17,8 +17,8 @@ var schemaSQL string
 const (
 	StatusPending = "pending"
 	StatusRunning = "running"
-	StatusOK      = "ok"
-	StatusError   = "error"
+	StatusOK      = "completed"
+	StatusError   = "failed"
 
 	staleTimeout = 5 * time.Minute
 )
