@@ -248,10 +248,6 @@ func cmdAsk(args []string) {
 
 	e, err := setupEnv()
 	if err != nil {
-		if f.jsonMode {
-			json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-			os.Exit(1)
-		}
 		fatal(err)
 	}
 	defer e.store.Close()
@@ -261,10 +257,6 @@ func cmdAsk(args []string) {
 		e.cfg.Model = f.model
 		p, err := newProvider(e.cfg)
 		if err != nil {
-			if f.jsonMode {
-				json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-				os.Exit(1)
-			}
 			fatal(err)
 		}
 		e.provider = queue.New(p, queue.Config{
@@ -278,20 +270,12 @@ func cmdAsk(args []string) {
 	if f.systemPrompt != "" {
 		data, err := os.ReadFile(f.systemPrompt)
 		if err != nil {
-			if f.jsonMode {
-				json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-				os.Exit(1)
-			}
 			fatal(err)
 		}
 		sysPrompt = string(data)
 	} else {
 		sysPrompt, err = prompt.Load()
 		if err != nil {
-			if f.jsonMode {
-				json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-				os.Exit(1)
-			}
 			fatal(err)
 		}
 	}
@@ -300,10 +284,6 @@ func cmdAsk(args []string) {
 	if f.skillDir != "" {
 		extra, err := loadSkillDir(f.skillDir)
 		if err != nil {
-			if f.jsonMode {
-				json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-				os.Exit(1)
-			}
 			fatal(err)
 		}
 		if extra != "" {
@@ -325,20 +305,12 @@ func cmdAsk(args []string) {
 	if f.contextFile != "" {
 		sess, err = session.Open(f.contextFile)
 		if err != nil {
-			if f.jsonMode {
-				json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-				os.Exit(1)
-			}
 			fatal(err)
 		}
 	} else {
 		ctxDir := filepath.Join(os.TempDir(), "agentgate")
 		sess, err = session.New(ctxDir, e.cfg.Provider+"/"+e.cfg.Model)
 		if err != nil {
-			if f.jsonMode {
-				json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-				os.Exit(1)
-			}
 			fatal(err)
 		}
 	}
@@ -360,10 +332,6 @@ func cmdAsk(args []string) {
 		Meta:    map[string]string{"date": time.Now().UTC().Format(time.RFC3339)},
 	}
 	if err := sess.AppendMessage(userMsg); err != nil {
-		if f.jsonMode {
-			json.NewEncoder(os.Stdout).Encode(jsonResult{Error: err.Error()})
-			os.Exit(1)
-		}
 		fatal(err)
 	}
 
@@ -381,22 +349,17 @@ func cmdAsk(args []string) {
 		}
 		prevLen := len(sess.Messages)
 		_, usage, allMsgs, err := a.RunMessages(ctx, sess.Messages)
-		// Persist new messages to context file.
 		sess.AppendMessages(allMsgs[prevLen:])
-
-		status, exitCode := agent.Status(err)
-		result := jsonResult{
+		if err != nil {
+			fatal(err)
+		}
+		json.NewEncoder(os.Stdout).Encode(jsonResult{
 			SessionID: sessionID,
-			Status:    status,
+			Status:    "ok",
 			Context:   sess.FilePath,
 			Text:      lastAssistantText(allMsgs),
 			Usage:     jsonUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens},
-		}
-		if err != nil {
-			result.Error = err.Error()
-		}
-		json.NewEncoder(os.Stdout).Encode(result)
-		os.Exit(exitCode)
+		})
 		return
 	}
 
@@ -438,7 +401,6 @@ type jsonResult struct {
 	Context   string    `json:"context"`
 	Text      string    `json:"text"`
 	Usage     jsonUsage `json:"usage"`
-	Error     string    `json:"error,omitempty"`
 }
 
 type jsonUsage struct {
