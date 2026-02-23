@@ -120,12 +120,22 @@ func (s *Session) AppendMessage(msg provider.Message) error {
 	return nil
 }
 
-// AppendMessages writes multiple messages to the file.
+// AppendMessages writes multiple messages to the file as a single write.
 func (s *Session) AppendMessages(msgs []provider.Message) error {
+	var buf []byte
 	for _, msg := range msgs {
-		if err := s.AppendMessage(msg); err != nil {
-			return err
+		data, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("session: marshal: %w", err)
 		}
+		buf = append(buf, data...)
+		buf = append(buf, '\n')
+	}
+	if _, err := s.file.Write(buf); err != nil {
+		return fmt.Errorf("session: write: %w", err)
+	}
+	for _, msg := range msgs {
+		s.Messages = append(s.Messages, msg)
 	}
 	return nil
 }
