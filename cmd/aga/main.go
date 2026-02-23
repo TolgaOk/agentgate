@@ -242,14 +242,13 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		MaxSteps:     e.cfg.MaxSteps,
 		SessionID:    sessionID,
 		Out:          out,
+		OnStep:       func(msgs []provider.Message) { sess.AppendMessages(msgs) },
 	}
 
-	prevLen := len(sess.Messages)
 	_, usage, allMsgs, err := a.RunMessages(ctx, sess.Messages)
 	if sr != nil {
 		sr.Finish()
 	}
-	sess.AppendMessages(allMsgs[prevLen:])
 
 	if err != nil {
 		fmt.Fprintln(os.Stderr)

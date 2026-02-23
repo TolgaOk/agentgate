@@ -164,14 +164,9 @@ func (s *Session) Run(ctx context.Context, a *agent.Agent, in io.Reader, out io.
 			return err
 		}
 
-		prevLen := len(s.Messages)
-		_, usage, allMsgs, err := a.RunMessages(ctx, s.Messages)
+		a.OnStep = func(msgs []provider.Message) { s.AppendMessages(msgs) }
+		_, usage, _, err := a.RunMessages(ctx, s.Messages)
 		if err != nil {
-			return err
-		}
-
-		newMsgs := allMsgs[prevLen:]
-		if err := s.AppendMessages(newMsgs); err != nil {
 			return err
 		}
 

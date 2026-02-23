@@ -45,6 +45,13 @@ type Agent struct {
 	MaxSteps     int
 	SessionID    string
 	Out          io.Writer
+	OnStep       func(newMsgs []provider.Message) // called after each step with new messages
+}
+
+func (a *Agent) flushStep(msgs []provider.Message) {
+	if a.OnStep != nil {
+		a.OnStep(msgs)
+	}
 }
 
 func (a *Agent) out() io.Writer {
@@ -108,12 +115,17 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 			}
 		}
 
+		if ctx.Err() != nil {
+			return "", totalUsage, messages, fmt.Errorf("agent: step %d: %w", step, ctx.Err())
+		}
+
 		totalUsage.InputTokens += stepUsage.InputTokens
 		totalUsage.OutputTokens += stepUsage.OutputTokens
 		latency := time.Since(start)
 
 
 		// Append assistant message with metadata.
+		stepStart := len(messages)
 		messages = append(messages, provider.Message{
 			Role:      provider.RoleAssistant,
 			Content:   text.String(),
@@ -130,6 +142,7 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 		// No tool calls — we're done.
 		if len(toolCalls) == 0 {
 			fmt.Fprintln(a.out())
+			a.flushStep(messages[stepStart:])
 			return text.String(), totalUsage, messages, nil
 		}
 
@@ -147,6 +160,7 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 				},
 			})
 		}
+		a.flushStep(messages[stepStart:])
 	}
 
 	return "", totalUsage, messages, fmt.Errorf("agent: exceeded max steps (%d)", a.MaxSteps)
