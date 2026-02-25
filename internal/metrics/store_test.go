@@ -126,6 +126,59 @@ func TestFail(t *testing.T) {
 	}
 }
 
+func TestTryAcquireIgnoresStaleHeartbeat(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Directly insert a "running" row with a stale heartbeat (10 seconds ago).
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO calls (id, session_id, pid, created_at, started_at, provider, model, status, last_heartbeat)
+		 VALUES ('stale1', 's1', 999, datetime('now'), datetime('now'), 'anthropic', 'm', 'running',
+		         datetime('now', '-10 seconds'))`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Enqueue a new call — should acquire because stale1's heartbeat is old.
+	s.Enqueue(ctx, "new1", "s1", "anthropic", "m")
+	ok, err := s.TryAcquire(ctx, "new1", "anthropic", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("TryAcquire should succeed — stale heartbeat should be ignored")
+	}
+}
+
+func TestHeartbeatUpdatesTimestamp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	s.Enqueue(ctx, "hb1", "s1", "anthropic", "m")
+	s.TryAcquire(ctx, "hb1", "anthropic", 5, 5)
+
+	// Record initial heartbeat value.
+	var before string
+	s.db.QueryRow("SELECT last_heartbeat FROM calls WHERE id = 'hb1'").Scan(&before)
+
+	// Update heartbeat.
+	if err := s.Heartbeat(ctx, "hb1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var after string
+	s.db.QueryRow("SELECT last_heartbeat FROM calls WHERE id = 'hb1'").Scan(&after)
+
+	if after == "" {
+		t.Fatal("last_heartbeat should not be empty after Heartbeat()")
+	}
+	// The heartbeat should be at least as recent as before.
+	if after < before {
+		t.Errorf("heartbeat went backwards: before=%s, after=%s", before, after)
+	}
+}
+
 func TestSchemaIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s1, err := NewStore(path)

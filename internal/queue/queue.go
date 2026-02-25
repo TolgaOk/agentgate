@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	maxRetries   = 3
-	pollInterval = 500 * time.Millisecond
+	maxRetries        = 3
+	pollInterval      = 500 * time.Millisecond
+	heartbeatInterval = 500 * time.Millisecond
 )
 
 type Queue struct {
@@ -65,6 +66,8 @@ func (q *Queue) Chat(ctx context.Context, req provider.Request) (provider.Respon
 	if err != nil {
 		return provider.Response{}, err
 	}
+	stopHB := q.startHeartbeat(ctx, callID)
+	defer stopHB()
 
 	resp, err := q.callWithRetry(ctx, func() (any, error) {
 		return q.inner.Chat(ctx, req)
@@ -84,17 +87,19 @@ func (q *Queue) ChatStream(ctx context.Context, req provider.Request) (<-chan pr
 	if err != nil {
 		return nil, err
 	}
+	stopHB := q.startHeartbeat(ctx, callID)
 
 	ch, err := q.callWithRetry(ctx, func() (any, error) {
 		return q.inner.ChatStream(ctx, req)
 	})
 	if err != nil {
+		stopHB()
 		q.fail(ctx, callID, err.Error())
 		return nil, err
 	}
 
 	innerCh := ch.(<-chan provider.StreamChunk)
-	return q.wrapStream(ctx, callID, innerCh), nil
+	return q.wrapStream(ctx, callID, innerCh, stopHB), nil
 }
 
 // acquire enqueues a call and waits until a slot is available.
@@ -134,11 +139,36 @@ func (q *Queue) acquire(ctx context.Context) (string, error) {
 	}
 }
 
+// startHeartbeat spawns a goroutine that periodically updates the heartbeat
+// timestamp in the store. Returns a function to stop the goroutine.
+func (q *Queue) startHeartbeat(ctx context.Context, callID string) func() {
+	if q.store == nil {
+		return func() {}
+	}
+	stopCh := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				q.store.Heartbeat(ctx, callID)
+			case <-stopCh:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func() { close(stopCh) }
+}
+
 // wrapStream proxies the inner channel and calls complete/fail when done.
-func (q *Queue) wrapStream(ctx context.Context, callID string, inner <-chan provider.StreamChunk) <-chan provider.StreamChunk {
+func (q *Queue) wrapStream(ctx context.Context, callID string, inner <-chan provider.StreamChunk, stopHB func()) <-chan provider.StreamChunk {
 	out := make(chan provider.StreamChunk)
 	go func() {
 		defer close(out)
+		defer stopHB()
 		var totalIn, totalOut int
 		start := time.Now()
 

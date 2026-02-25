@@ -19,8 +19,6 @@ const (
 	StatusRunning = "running"
 	StatusOK      = "completed"
 	StatusError   = "failed"
-
-	staleTimeout = 5 * time.Minute
 )
 
 type Store struct {
@@ -65,8 +63,18 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("metrics: create schema: %w", err)
 	}
 	s := &Store{db: db}
-	s.CleanupStale(context.Background())
+	s.cleanupStaleHeartbeats()
 	return s, nil
+}
+
+// cleanupStaleHeartbeats marks running rows with expired heartbeats as failed.
+// Runs once on startup to clean up ghosts from crashed processes.
+func (s *Store) cleanupStaleHeartbeats() {
+	s.db.Exec(
+		`UPDATE calls SET status = ?, finished_at = datetime('now')
+		 WHERE status = ? AND last_heartbeat < datetime('now', '-2 seconds')`,
+		StatusError, StatusRunning,
+	)
 }
 
 func (s *Store) Close() error {
@@ -76,8 +84,8 @@ func (s *Store) Close() error {
 // Enqueue inserts a pending call row.
 func (s *Store) Enqueue(ctx context.Context, id, sessionID, prov, model string) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO calls (id, session_id, pid, created_at, provider, model, status)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO calls (id, session_id, pid, created_at, provider, model, status, last_heartbeat)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
 		id, sessionID, os.Getpid(), now(), prov, model, StatusPending,
 	)
 	if err != nil {
@@ -88,13 +96,14 @@ func (s *Store) Enqueue(ctx context.Context, id, sessionID, prov, model string) 
 
 // TryAcquire atomically transitions a pending call to running,
 // but only if both the global and per-provider concurrency limits allow it.
+// Only counts rows with a recent heartbeat (within 2 seconds) as actively running.
 // Returns true if the call was acquired, false if limits are reached.
 func (s *Store) TryAcquire(ctx context.Context, id, prov string, globalLimit, providerLimit int) (bool, error) {
 	result, err := s.db.ExecContext(ctx,
-		`UPDATE calls SET status = ?, started_at = ?
+		`UPDATE calls SET status = ?, started_at = ?, last_heartbeat = datetime('now')
 		 WHERE id = ? AND status = ?
-		 AND (SELECT COUNT(*) FROM calls WHERE status = ?) < ?
-		 AND (SELECT COUNT(*) FROM calls WHERE status = ? AND provider = ?) < ?`,
+		 AND (SELECT COUNT(*) FROM calls WHERE status = ? AND last_heartbeat > datetime('now', '-2 seconds')) < ?
+		 AND (SELECT COUNT(*) FROM calls WHERE status = ? AND provider = ? AND last_heartbeat > datetime('now', '-2 seconds')) < ?`,
 		StatusRunning, now(),
 		id, StatusPending,
 		StatusRunning, globalLimit,
@@ -143,15 +152,17 @@ func (s *Store) Fail(ctx context.Context, id, reason string) error {
 	return nil
 }
 
-// CleanupStale marks old pending/running rows as error (crashed processes).
-func (s *Store) CleanupStale(ctx context.Context) {
-	cutoff := time.Now().UTC().Add(-staleTimeout).Format(time.RFC3339)
-	s.db.ExecContext(ctx,
-		`UPDATE calls SET status = ?, finished_at = ?
-		 WHERE status IN (?, ?) AND created_at < ?`,
-		StatusError, now(),
-		StatusPending, StatusRunning, cutoff,
+
+// Heartbeat updates the last_heartbeat timestamp for a running call.
+func (s *Store) Heartbeat(ctx context.Context, callID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE calls SET last_heartbeat = datetime('now') WHERE id = ?`,
+		callID,
 	)
+	if err != nil {
+		return fmt.Errorf("metrics: heartbeat: %w", err)
+	}
+	return nil
 }
 
 // Record inserts a completed call in one shot (backwards compat).
