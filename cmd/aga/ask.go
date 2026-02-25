@@ -38,6 +38,7 @@ func newAskCmd() *cobra.Command {
 	cmd.Flags().Duration("timeout", 0, "Overall timeout for the entire operation (e.g. 30s, 2m)")
 	cmd.Flags().String("session-id", "", "Tag this call for metrics tracking")
 	cmd.Flags().String("render", "", "Render markdown: auto, dark, light, raw")
+	cmd.Flags().Bool("no-tool", false, "Disable tool usage (text-only mode)")
 	return cmd
 }
 
@@ -64,6 +65,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	timeoutFlag, _ := cmd.Flags().GetDuration("timeout")
 	sessionID, _ := cmd.Flags().GetString("session-id")
 	renderFlag, _ := cmd.Flags().GetString("render")
+	noTool, _ := cmd.Flags().GetBool("no-tool")
 
 	e, err := setupEnv()
 	if err != nil {
@@ -194,6 +196,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		MaxTokens:    maxTokens,
 		MaxSteps:     e.cfg.MaxSteps,
 		SessionID:    sessionID,
+		NoTool:       noTool,
 		Out:          out,
 		OnStep:       func(msgs []provider.Message) { sess.AppendMessages(msgs) },
 	}

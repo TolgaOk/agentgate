@@ -45,7 +45,7 @@ func setupEnv() (*env, error) {
 		return nil, err
 	}
 	os.MkdirAll(metricsDir, 0755)
-	store, err := metrics.NewStore(filepath.Join(metricsDir, "metrics.db"))
+	store, err := metrics.NewStore(filepath.Join(metricsDir, "aga.db"))
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func dataDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "agentgate"), nil
+	return filepath.Join(home, ".agentgate"), nil
 }
 
 func fatal(err error) {

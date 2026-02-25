@@ -17,8 +17,12 @@ func Load() (string, error) {
 
 	path := filepath.Join(dir, "system.md")
 	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "\033[33mwarning: no system prompt at %s\033[0m\n", path)
+		return "", nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("prompt: %s not found — create it with your system prompt", path)
+		return "", fmt.Errorf("prompt: %w", err)
 	}
 
 	return string(data), nil

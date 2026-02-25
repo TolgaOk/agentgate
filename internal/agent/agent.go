@@ -44,6 +44,7 @@ type Agent struct {
 	MaxTokens    int
 	MaxSteps     int
 	SessionID    string
+	NoTool       bool
 	Out          io.Writer
 	OnStep       func(newMsgs []provider.Message) // called after each step with new messages
 }
@@ -78,10 +79,14 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 	var totalUsage provider.Usage
 
 	for step := range a.MaxSteps {
+		var tools []provider.ToolDef
+		if !a.NoTool {
+			tools = []provider.ToolDef{provider.BashToolDef()}
+		}
 		req := provider.Request{
 			SystemPrompt: a.SystemPrompt,
 			Messages:     messages,
-			Tools:        []provider.ToolDef{provider.BashToolDef()},
+			Tools:        tools,
 			MaxTokens:    a.MaxTokens,
 		}
 

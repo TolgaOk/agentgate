@@ -45,7 +45,7 @@ func runMetrics(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := metrics.NewStore(filepath.Join(metricsDir, "metrics.db"))
+	store, err := metrics.NewStore(filepath.Join(metricsDir, "aga.db"))
 	if err != nil {
 		return err
 	}
