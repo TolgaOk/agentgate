@@ -83,6 +83,50 @@ func TestOutputTruncation(t *testing.T) {
 	}
 }
 
+// --- ExecuteDirect tests ---
+
+func TestDirectEcho(t *testing.T) {
+	r, err := ExecuteDirect(context.Background(), []string{"echo", "hello", "world"}, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ExitCode != 0 {
+		t.Errorf("ExitCode = %d, want 0", r.ExitCode)
+	}
+	if got := strings.TrimSpace(r.Stdout); got != "hello world" {
+		t.Errorf("Stdout = %q, want %q", got, "hello world")
+	}
+}
+
+func TestDirectExitCode(t *testing.T) {
+	r, err := ExecuteDirect(context.Background(), []string{"sh", "-c", "exit 7"}, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ExitCode != 7 {
+		t.Errorf("ExitCode = %d, want 7", r.ExitCode)
+	}
+}
+
+func TestDirectTimeout(t *testing.T) {
+	start := time.Now()
+	_, err := ExecuteDirect(context.Background(), []string{"sleep", "60"}, 200*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Error("expected error from timeout")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("took %v, expected fast return on timeout", elapsed)
+	}
+}
+
+func TestDirectEmptyArgv(t *testing.T) {
+	_, err := ExecuteDirect(context.Background(), []string{}, 5*time.Second)
+	if err == nil {
+		t.Error("expected error for empty argv")
+	}
+}
+
 func TestStdoutAndStderrSeparate(t *testing.T) {
 	r, err := Execute(context.Background(), "echo out && echo err >&2", 5*time.Second)
 	if err != nil {

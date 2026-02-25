@@ -131,13 +131,12 @@ func toORMsg(m Message) orMsg {
 	if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
 		msg := orMsg{Role: "assistant", Content: m.Content}
 		for _, tc := range m.ToolCalls {
-			args, _ := json.Marshal(map[string]string{"command": tc.Input})
 			msg.ToolCalls = append(msg.ToolCalls, orToolCall{
 				ID:   tc.ID,
 				Type: "function",
 				Function: orFunction{
 					Name:      tc.Name,
-					Arguments: string(args),
+					Arguments: ensureJSON(tc.Input),
 				},
 			})
 		}
@@ -212,10 +211,7 @@ func parseORResponse(or orResponse) Response {
 		resp.Text = msg.Content
 		for _, tc := range msg.ToolCalls {
 			call := ToolCall{ID: tc.ID, Name: tc.Function.Name}
-			var args map[string]string
-			if json.Unmarshal([]byte(tc.Function.Arguments), &args) == nil {
-				call.Input = args["command"]
-			}
+			call.Input = tc.Function.Arguments
 			resp.ToolCalls = append(resp.ToolCalls, call)
 		}
 	}
@@ -277,10 +273,7 @@ func (o *OpenRouter) readStream(ctx context.Context, body io.ReadCloser, ch chan
 			// Emit any accumulated tool calls.
 			for _, ts := range tools {
 				tc := ToolCall{ID: ts.id, Name: ts.name}
-				var args map[string]string
-				if json.Unmarshal([]byte(ts.args.String()), &args) == nil {
-					tc.Input = args["command"]
-				}
+				tc.Input = ts.args.String()
 				if !sendChunk(ctx, ch, StreamChunk{Kind: ChunkToolUse, Tool: &tc}) {
 					return
 				}

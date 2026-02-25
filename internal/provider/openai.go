@@ -141,12 +141,11 @@ func toOAIInput(m Message) []any {
 			})
 		}
 		for _, tc := range m.ToolCalls {
-			args, _ := json.Marshal(map[string]string{"command": tc.Input})
 			items = append(items, map[string]string{
 				"type":      "function_call",
 				"call_id":   tc.ID,
 				"name":      tc.Name,
-				"arguments": string(args),
+				"arguments": ensureJSON(tc.Input),
 			})
 		}
 		return items
@@ -176,10 +175,7 @@ func parseOAIResponse(r oaiResponse) Response {
 			}
 		case "function_call":
 			tc := ToolCall{ID: item.CallID, Name: item.Name}
-			var args map[string]string
-			if json.Unmarshal([]byte(item.Arguments), &args) == nil {
-				tc.Input = args["command"]
-			}
+			tc.Input = item.Arguments
 			resp.ToolCalls = append(resp.ToolCalls, tc)
 		}
 	}
@@ -359,10 +355,7 @@ func (o *OpenAI) readStream(ctx context.Context, body io.ReadCloser, ch chan<- S
 				if ev.Name != "" {
 					tc.Name = ev.Name
 				}
-				var args map[string]string
-				if json.Unmarshal([]byte(ev.Arguments), &args) == nil {
-					tc.Input = args["command"]
-				}
+				tc.Input = ev.Arguments
 				if !sendChunk(ctx, ch, StreamChunk{Kind: ChunkToolUse, Tool: &tc}) {
 					return
 				}

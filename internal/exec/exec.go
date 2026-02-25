@@ -60,6 +60,49 @@ func Execute(ctx context.Context, command string, timeout time.Duration) (Result
 	return r, nil
 }
 
+// ExecuteDirect runs a binary with explicit args (no shell).
+// argv[0] is the binary, argv[1:] are arguments.
+func ExecuteDirect(ctx context.Context, argv []string, timeout time.Duration) (Result, error) {
+	if len(argv) == 0 {
+		return Result{}, fmt.Errorf("exec: empty argv")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	if ctx.Err() != nil && cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+
+	r := Result{
+		Stdout: truncate(stdout.Bytes()),
+		Stderr: truncate(stderr.Bytes()),
+	}
+
+	if err != nil {
+		if ctx.Err() != nil {
+			return r, fmt.Errorf("exec: %w", ctx.Err())
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			r.ExitCode = exitErr.ExitCode()
+		} else {
+			return r, fmt.Errorf("exec: %w", err)
+		}
+	}
+
+	return r, nil
+}
+
 func truncate(b []byte) string {
 	if len(b) <= maxOutputBytes {
 		return string(b)

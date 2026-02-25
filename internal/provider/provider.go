@@ -11,22 +11,13 @@ type Provider interface {
 	ChatStream(ctx context.Context, req Request) (<-chan StreamChunk, error)
 }
 
-// BashToolDef returns the tool definition for the bash tool.
-func BashToolDef() ToolDef {
-	schema := json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"command": {
-				"type": "string",
-				"description": "The shell command to execute"
-			}
-		},
-		"required": ["command"]
-	}`)
-
-	return ToolDef{
-		Name:        "bash",
-		Description: "Run a shell command and return output",
-		InputSchema: schema,
+// ensureJSON returns s as-is if it's valid JSON, otherwise wraps it
+// as {"command": "..."} for backwards compatibility with old session files
+// where ToolCall.Input was a plain command string.
+func ensureJSON(s string) string {
+	if json.Valid([]byte(s)) {
+		return s
 	}
+	b, _ := json.Marshal(map[string]string{"command": s})
+	return string(b)
 }

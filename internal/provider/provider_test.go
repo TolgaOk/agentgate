@@ -1,7 +1,6 @@
 package provider
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -47,29 +46,18 @@ func TestParseOpenRouterError(t *testing.T) {
 	}
 }
 
-func TestBashToolDefValidJSON(t *testing.T) {
-	td := BashToolDef()
+func TestEnsureJSON_ValidJSON(t *testing.T) {
+	input := `{"command":"ls -la"}`
+	got := ensureJSON(input)
+	if got != input {
+		t.Errorf("ensureJSON(%q) = %q, want unchanged", input, got)
+	}
+}
 
-	if td.Name != "bash" {
-		t.Errorf("Name = %q, want %q", td.Name, "bash")
-	}
-	if td.Description == "" {
-		t.Error("Description is empty")
-	}
-
-	// Verify InputSchema is valid JSON.
-	var schema map[string]any
-	if err := json.Unmarshal(td.InputSchema, &schema); err != nil {
-		t.Fatalf("InputSchema is not valid JSON: %v", err)
-	}
-	if schema["type"] != "object" {
-		t.Errorf("schema type = %v, want object", schema["type"])
-	}
-	props, ok := schema["properties"].(map[string]any)
-	if !ok {
-		t.Fatal("schema missing properties")
-	}
-	if _, ok := props["command"]; !ok {
-		t.Error("schema missing command property")
+func TestEnsureJSON_PlainString(t *testing.T) {
+	got := ensureJSON("ls -la")
+	want := `{"command":"ls -la"}`
+	if got != want {
+		t.Errorf("ensureJSON(plain) = %q, want %q", got, want)
 	}
 }

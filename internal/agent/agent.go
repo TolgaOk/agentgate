@@ -13,6 +13,7 @@ import (
 	agexec "github.com/TolgaOk/agentgate/internal/exec"
 	"github.com/TolgaOk/agentgate/internal/policy"
 	"github.com/TolgaOk/agentgate/internal/provider"
+	"github.com/TolgaOk/agentgate/internal/skill"
 )
 
 
@@ -44,7 +45,9 @@ type Agent struct {
 	MaxTokens    int
 	MaxSteps     int
 	SessionID    string
+	Skills       []skill.Skill
 	NoTool       bool
+	AutoAccept   bool
 	Out          io.Writer
 	OnStep       func(newMsgs []provider.Message) // called after each step with new messages
 }
@@ -81,7 +84,11 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 	for step := range a.MaxSteps {
 		var tools []provider.ToolDef
 		if !a.NoTool {
-			tools = []provider.ToolDef{provider.BashToolDef()}
+			for _, s := range a.Skills {
+				if s.IsTool() {
+					tools = append(tools, s.ToToolDef())
+				}
+			}
 		}
 		req := provider.Request{
 			SystemPrompt: a.SystemPrompt,
@@ -172,19 +179,37 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 }
 
 func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.ToolResult {
-	decision := a.Policy.Check(tc.Input)
+	s := a.findSkill(tc.Name)
+	if s == nil {
+		return provider.ToolResult{
+			ToolCallID: tc.ID,
+			Content:    fmt.Sprintf("unknown tool %q", tc.Name),
+			IsError:    true,
+		}
+	}
+
+	argv, err := s.BuildArgv(tc.Input)
+	if err != nil {
+		return provider.ToolResult{
+			ToolCallID: tc.ID,
+			Content:    fmt.Sprintf("Error: %s", err),
+			IsError:    true,
+		}
+	}
+
+	display := strings.Join(argv, " ")
+	decision := a.Policy.Check(tc.Name)
 
 	switch decision.Kind {
 	case policy.Block:
-		fmt.Fprintf(a.out(), "\n[BLOCKED] %s: %s\n", tc.Input, decision.Reason)
+		fmt.Fprintf(a.out(), "\n[BLOCKED] %s: %s\n", display, decision.Reason)
 		return provider.ToolResult{
 			ToolCallID: tc.ID,
 			Content:    fmt.Sprintf("BLOCKED: %s", decision.Reason),
 			IsError:    true,
 		}
-
 	case policy.Confirm:
-		if !confirmFromTTY(tc.Input) {
+		if !a.AutoAccept && !confirmFromTTY(display) {
 			fmt.Fprintln(a.out(), "\n[DENIED by user]")
 			return provider.ToolResult{
 				ToolCallID: tc.ID,
@@ -194,8 +219,8 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 		}
 	}
 
-	fmt.Fprintf(a.out(), "\n> %s\n", tc.Input)
-	result, err := agexec.Execute(ctx, tc.Input, a.Policy.Timeout)
+	fmt.Fprintf(a.out(), "\n> %s\n", display)
+	result, err := agexec.ExecuteDirect(ctx, argv, a.Policy.Timeout)
 	if err != nil {
 		return provider.ToolResult{
 			ToolCallID: tc.ID,
@@ -207,6 +232,15 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 		ToolCallID: tc.ID,
 		Content:    formatExecResult(result),
 	}
+}
+
+func (a *Agent) findSkill(name string) *skill.Skill {
+	for i := range a.Skills {
+		if a.Skills[i].Name == name {
+			return &a.Skills[i]
+		}
+	}
+	return nil
 }
 
 func formatExecResult(r agexec.Result) string {

@@ -59,7 +59,7 @@ func TestToAnthropicMsgToolCalls(t *testing.T) {
 		Role:    RoleAssistant,
 		Content: "Let me run that.",
 		ToolCalls: []ToolCall{
-			{ID: "tc_1", Name: "bash", Input: "ls -la"},
+			{ID: "tc_1", Name: "bash", Input: `{"command":"ls -la"}`},
 		},
 	}
 	am := toAnthropicMsg(m)
@@ -97,8 +97,8 @@ func TestParseAnthropicResponse(t *testing.T) {
 	if len(resp.ToolCalls) != 1 {
 		t.Fatalf("len(ToolCalls) = %d, want 1", len(resp.ToolCalls))
 	}
-	if resp.ToolCalls[0].Input != "ls" {
-		t.Errorf("ToolCalls[0].Input = %q, want ls", resp.ToolCalls[0].Input)
+	if resp.ToolCalls[0].Input != `{"command":"ls"}` {
+		t.Errorf("ToolCalls[0].Input = %q, want raw JSON", resp.ToolCalls[0].Input)
 	}
 	if resp.Usage.InputTokens != 100 {
 		t.Errorf("InputTokens = %d, want 100", resp.Usage.InputTokens)
@@ -234,8 +234,8 @@ data: {"type":"message_stop"}
 	if len(tools) != 1 {
 		t.Fatalf("len(tools) = %d, want 1", len(tools))
 	}
-	if tools[0].Input != "ls -la" {
-		t.Errorf("Input = %q, want %q", tools[0].Input, "ls -la")
+	if tools[0].Input != `{"command":"ls -la"}` {
+		t.Errorf("Input = %q, want raw JSON", tools[0].Input)
 	}
 	if tools[0].Name != "bash" {
 		t.Errorf("Name = %q, want bash", tools[0].Name)

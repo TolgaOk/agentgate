@@ -119,13 +119,11 @@ func toAnthropicMsg(m Message) anthropicMsg {
 			blocks = append(blocks, anthropicContentBlock{Type: "text", Text: m.Content})
 		}
 		for _, tc := range m.ToolCalls {
-			// Parse the command string into the expected JSON input format.
-			input, _ := json.Marshal(map[string]string{"command": tc.Input})
 			blocks = append(blocks, anthropicContentBlock{
 				Type:  "tool_use",
 				ID:    tc.ID,
 				Name:  tc.Name,
-				Input: input,
+				Input: json.RawMessage(ensureJSON(tc.Input)),
 			})
 		}
 		content, _ := json.Marshal(blocks)
@@ -152,11 +150,7 @@ func parseAnthropicResponse(ar anthropicResponse) Response {
 			resp.Text += block.Text
 		case "tool_use":
 			tc := ToolCall{ID: block.ID, Name: block.Name}
-			// Extract "command" from input JSON.
-			var input map[string]string
-			if json.Unmarshal(block.Input, &input) == nil {
-				tc.Input = input["command"]
-			}
+			tc.Input = string(block.Input)
 			resp.ToolCalls = append(resp.ToolCalls, tc)
 		}
 	}
@@ -326,18 +320,12 @@ func (a *Anthropic) readStream(ctx context.Context, body io.ReadCloser, ch chan<
 
 		case "content_block_stop":
 			if currentTool != nil {
-				// Parse accumulated JSON to extract command.
-				var input map[string]string
-				cmd := currentTool.inputJSON.String()
-				if json.Unmarshal([]byte(cmd), &input) == nil {
-					cmd = input["command"]
-				}
 				if !sendChunk(ctx, ch, StreamChunk{
 					Kind: ChunkToolUse,
 					Tool: &ToolCall{
 						ID:    currentTool.id,
 						Name:  currentTool.name,
-						Input: cmd,
+						Input: currentTool.inputJSON.String(),
 					},
 				}) {
 					return

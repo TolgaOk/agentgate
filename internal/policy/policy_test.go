@@ -1,102 +1,120 @@
 package policy
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestCheckAllowed(t *testing.T) {
-	p := Default()
-	d := p.Check("echo hello")
+	p := Policy{Allowed: []string{"bash", "grep", "ls"}}
+	d := p.Check("bash")
 	if d.Kind != Allow {
-		t.Errorf("Check(echo hello) = %v, want Allow", d.Kind)
+		t.Errorf("Check(bash) = %v, want Allow", d.Kind)
 	}
 }
 
 func TestCheckBlocked(t *testing.T) {
-	p := Default()
-	tests := []string{
-		"rm -rf /",
-		"sudo apt install foo",
-		"echo test > /dev/sda",
-	}
-	for _, cmd := range tests {
-		d := p.Check(cmd)
-		if d.Kind != Block {
-			t.Errorf("Check(%q) = %v, want Block", cmd, d.Kind)
-		}
-	}
-}
-
-func TestCheckConfirm(t *testing.T) {
-	p := Default()
-	tests := []string{
-		"rm file.txt",
-		"git push origin main",
-	}
-	for _, cmd := range tests {
-		d := p.Check(cmd)
-		if d.Kind != Confirm {
-			t.Errorf("Check(%q) = %v, want Confirm", cmd, d.Kind)
-		}
-	}
-}
-
-func TestBlockedTakesPriority(t *testing.T) {
-	p := Policy{
-		Blocked: []string{"sudo "},
-		Confirm: []string{"sudo "},
-	}
-	d := p.Check("sudo rm -rf /")
+	p := Policy{Blocked: []string{"dangerous"}}
+	d := p.Check("dangerous")
 	if d.Kind != Block {
-		t.Errorf("Check(sudo rm -rf /) = %v, want Block (blocked > confirm)", d.Kind)
+		t.Errorf("Check(dangerous) = %v, want Block", d.Kind)
 	}
 }
 
-func TestLoadFromFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "policy.toml")
-	os.WriteFile(path, []byte(`
-timeout = "10s"
-blocked = ["dangerous"]
-confirm = ["careful"]
-`), 0644)
-
-	p, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if p.Timeout != 10*time.Second {
-		t.Errorf("Timeout = %v, want 10s", p.Timeout)
-	}
-	if len(p.Blocked) != 1 || p.Blocked[0] != "dangerous" {
-		t.Errorf("Blocked = %v, want [dangerous]", p.Blocked)
-	}
-	if len(p.Confirm) != 1 || p.Confirm[0] != "careful" {
-		t.Errorf("Confirm = %v, want [careful]", p.Confirm)
+func TestCheckConfirmByDefault(t *testing.T) {
+	p := Policy{Allowed: []string{"bash"}}
+	d := p.Check("unknown")
+	if d.Kind != Confirm {
+		t.Errorf("Check(unknown) = %v, want Confirm", d.Kind)
 	}
 }
 
-func TestLoadDefaultsApplied(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "policy.toml")
-	// Empty file — all defaults.
-	os.WriteFile(path, []byte(``), 0644)
-
-	p, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
+func TestBlockedOverridesAllowed(t *testing.T) {
+	p := Policy{
+		Allowed: []string{"bash"},
+		Blocked: []string{"bash"},
 	}
-	if p.Timeout != 30*time.Second {
-		t.Errorf("Timeout = %v, want 30s (default)", p.Timeout)
+	d := p.Check("bash")
+	if d.Kind != Block {
+		t.Errorf("Check(bash) = %v, want Block (blocked > allowed)", d.Kind)
 	}
 }
 
-func TestLoadMissingFile(t *testing.T) {
-	_, err := Load("/nonexistent/policy.toml")
-	if err == nil {
-		t.Error("Load() should fail for missing file")
+func TestCheckExactMatch(t *testing.T) {
+	p := Policy{Allowed: []string{"ls"}}
+
+	// Exact match → Allow.
+	d := p.Check("ls")
+	if d.Kind != Allow {
+		t.Errorf("Check(ls) = %v, want Allow", d.Kind)
+	}
+
+	// Similar name → Confirm (no substring/prefix matching).
+	d = p.Check("lsof")
+	if d.Kind != Confirm {
+		t.Errorf("Check(lsof) = %v, want Confirm (exact match only)", d.Kind)
+	}
+}
+
+func TestCheckBlockedExactMatch(t *testing.T) {
+	p := Policy{Blocked: []string{"rm"}}
+
+	d := p.Check("rm")
+	if d.Kind != Block {
+		t.Errorf("Check(rm) = %v, want Block", d.Kind)
+	}
+
+	// "remark" is not "rm".
+	d = p.Check("remark")
+	if d.Kind != Confirm {
+		t.Errorf("Check(remark) = %v, want Confirm (exact match only)", d.Kind)
+	}
+}
+
+func TestCheckEmptyPolicy(t *testing.T) {
+	p := Policy{}
+	d := p.Check("anything")
+	if d.Kind != Confirm {
+		t.Errorf("Check with empty policy = %v, want Confirm", d.Kind)
+	}
+}
+
+func TestCheckMultipleAllowed(t *testing.T) {
+	p := Policy{Allowed: []string{"bash", "grep", "cat", "ls"}}
+	tests := []struct {
+		tool string
+		want DecisionKind
+	}{
+		{"bash", Allow},
+		{"grep", Allow},
+		{"cat", Allow},
+		{"ls", Allow},
+		{"rm", Confirm},
+		{"curl", Confirm},
+	}
+	for _, tt := range tests {
+		d := p.Check(tt.tool)
+		if d.Kind != tt.want {
+			t.Errorf("Check(%q) = %v, want %v", tt.tool, d.Kind, tt.want)
+		}
+	}
+}
+
+func TestCheckMultipleBlocked(t *testing.T) {
+	p := Policy{Blocked: []string{"sudo", "rm", "eval"}}
+	tests := []struct {
+		tool string
+		want DecisionKind
+	}{
+		{"sudo", Block},
+		{"rm", Block},
+		{"eval", Block},
+		{"bash", Confirm},
+		{"ls", Confirm},
+	}
+	for _, tt := range tests {
+		d := p.Check(tt.tool)
+		if d.Kind != tt.want {
+			t.Errorf("Check(%q) = %v, want %v", tt.tool, d.Kind, tt.want)
+		}
 	}
 }

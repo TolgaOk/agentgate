@@ -35,7 +35,7 @@ func setupEnv() (*env, error) {
 		return nil, err
 	}
 
-	pol, err := policy.LoadDefault()
+	pol, err := cfg.Policy()
 	if err != nil {
 		return nil, err
 	}

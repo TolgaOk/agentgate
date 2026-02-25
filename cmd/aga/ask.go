@@ -20,6 +20,7 @@ import (
 	"github.com/TolgaOk/agentgate/internal/queue"
 	"github.com/TolgaOk/agentgate/internal/render"
 	"github.com/TolgaOk/agentgate/internal/session"
+	"github.com/TolgaOk/agentgate/internal/skill"
 )
 
 func newAskCmd() *cobra.Command {
@@ -39,6 +40,7 @@ func newAskCmd() *cobra.Command {
 	cmd.Flags().String("session-id", "", "Tag this call for metrics tracking")
 	cmd.Flags().String("render", "", "Render markdown: auto, dark, light, raw")
 	cmd.Flags().Bool("no-tool", false, "Disable tool usage (text-only mode)")
+	cmd.Flags().Bool("auto-accept", false, "Auto-accept tool calls that require confirmation (blocked commands are still rejected)")
 	return cmd
 }
 
@@ -66,6 +68,7 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	sessionID, _ := cmd.Flags().GetString("session-id")
 	renderFlag, _ := cmd.Flags().GetString("render")
 	noTool, _ := cmd.Flags().GetBool("no-tool")
+	autoAccept, _ := cmd.Flags().GetBool("auto-accept")
 
 	e, err := setupEnv()
 	if err != nil {
@@ -103,14 +106,17 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Append skill docs.
+	// Load skills from --skill directory.
+	var skills []skill.Skill
 	if skillDir != "" {
-		extra, err := loadSkillDir(skillDir)
+		skills, err = skill.ParseDir(skillDir)
 		if err != nil {
 			fatal(err)
 		}
-		if extra != "" {
-			sysPrompt = sysPrompt + "\n\n" + extra
+		for _, s := range skills {
+			if s.Body != "" {
+				sysPrompt = sysPrompt + "\n\n" + s.Body
+			}
 		}
 	}
 
@@ -196,7 +202,9 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		MaxTokens:    maxTokens,
 		MaxSteps:     e.cfg.MaxSteps,
 		SessionID:    sessionID,
+		Skills:       skills,
 		NoTool:       noTool,
+		AutoAccept:   autoAccept,
 		Out:          out,
 		OnStep:       func(msgs []provider.Message) { sess.AppendMessages(msgs) },
 	}
@@ -227,25 +235,6 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func loadSkillDir(dir string) (string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("skill dir: %w", err)
-	}
-	var parts []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			return "", fmt.Errorf("skill dir: %w", err)
-		}
-		parts = append(parts, strings.TrimSpace(string(data)))
-	}
-	return strings.Join(parts, "\n\n"), nil
 }
 
 func lastAssistantText(msgs []provider.Message) string {

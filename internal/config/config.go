@@ -7,15 +7,24 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/TolgaOk/agentgate/internal/policy"
 )
 
 type Config struct {
-	Provider     string   `toml:"provider"`
-	Model        string   `toml:"model"`
-	MaxTokens int `toml:"max_tokens"`
-	MaxSteps  int `toml:"max_steps"`
-	ConcurrentGlobalLimit      int `toml:"concurrent_global_limit"`
-	ConcurrentPerProviderLimit int `toml:"concurrent_per_provider_limit"`
+	Provider                   string       `toml:"provider"`
+	Model                      string       `toml:"model"`
+	MaxTokens                  int          `toml:"max_tokens"`
+	MaxSteps                   int          `toml:"max_steps"`
+	ConcurrentGlobalLimit      int          `toml:"concurrent_global_limit"`
+	ConcurrentPerProviderLimit int          `toml:"concurrent_per_provider_limit"`
+	PolicyConfig               PolicyConfig `toml:"policy"`
+}
+
+type PolicyConfig struct {
+	Timeout string   `toml:"timeout"`
+	Allowed []string `toml:"allowed"`
+	Blocked []string `toml:"blocked"`
 }
 
 // Duration wraps time.Duration for TOML unmarshaling (e.g. "120s").
@@ -36,13 +45,36 @@ func (d Duration) MarshalText() ([]byte, error) {
 // Defaults returns a Config with sensible defaults.
 func Defaults() Config {
 	return Config{
-		Provider:     "openai",
-		Model:        "gpt-5.2",
-		MaxTokens: 8192,
-		MaxSteps:  20,
+		Provider:                   "openai",
+		Model:                      "gpt-5.2",
+		MaxTokens:                  8192,
+		MaxSteps:                   20,
 		ConcurrentGlobalLimit:      3,
 		ConcurrentPerProviderLimit: 1,
+		PolicyConfig: PolicyConfig{
+			Timeout: "30s",
+			Allowed: []string{},
+			Blocked: []string{},
+		},
 	}
+}
+
+// Policy converts the PolicyConfig into a policy.Policy.
+func (c Config) Policy() (policy.Policy, error) {
+	p := c.PolicyConfig
+	timeout := 30 * time.Second
+	if p.Timeout != "" {
+		d, err := time.ParseDuration(p.Timeout)
+		if err != nil {
+			return policy.Policy{}, fmt.Errorf("config: invalid policy timeout: %w", err)
+		}
+		timeout = d
+	}
+	return policy.Policy{
+		Timeout: timeout,
+		Allowed: p.Allowed,
+		Blocked: p.Blocked,
+	}, nil
 }
 
 // Load reads config from path, applies defaults for missing fields,
