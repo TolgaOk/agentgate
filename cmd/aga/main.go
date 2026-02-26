@@ -10,7 +10,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:               "aga",
 		Short:             "AgentGate Hub",
-		Version:           "0.1.0-alpha",
+		Version:           "0.1.0",
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 

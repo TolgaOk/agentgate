@@ -1,9 +1,10 @@
 # AgentGate 
 
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev)
-[![v0.1.0-alpha](https://img.shields.io/badge/v0.1.0--alpha-orange)]()
+[![v0.1.0](https://img.shields.io/badge/v0.1.0-green)]()
+[![macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)]()
 
-`aga` (short for Agent Gate) is a lightweight LLM hub designed for agentic workflows (humans welcome). It comes with built-in concurrency, tool execution, rate limiting, and conversation persistence.
+`aga` (short for Agent Gate) is a **lightweight LLM hub** designed for agentic workflows (humans welcome). It comes with built-in concurrency, tool execution, rate limiting, and conversation persistence.
 
 
 ## Install
@@ -51,9 +52,9 @@ See `aga ask --help` for more options.
 
 `aga` preserves the chat history in `context.json` for each conversation, updated incrementally with each LLM and tool call.
 
-> **Concurrency**: SQLite + heartbeat. 
+> **Concurrency**: Limit parallel API calls. 
 
-Concurrent LLM calls are limited per provider via SQLite. A heartbeat mechanism automatically frees slots from crashed processes.
+Concurrent LLM calls are queued and executed with a limit per provider (or globally) via SQLite. A heartbeat mechanism automatically frees slots from crashed processes.
 
 > **Tools**: Extend the tools by adding `skill.md` that describes a `CLI` tool.
 
@@ -79,6 +80,8 @@ metadata:
 <!-- No body is needed for tool skills -->
 ```
 
+Skills with `metadata.command` in the frontmatter are registered as **tools**.
+
 **Note**: `aga` comes barebones with no tools or skills.
 
 ## Providers
@@ -91,14 +94,20 @@ metadata:
 - `openrouter`
   - Requires API key: `OPENROUTER_API_KEY`
 
+`AG_PROVIDER` overrides the provider (e.g. `AG_PROVIDER=anthropic`).
+`AG_MODEL` overrides the model (e.g. `AG_MODEL=claude-sonnet-4-20250514`).
+
 ## Configuration
 
 ```
 ~/.config/agentgate/
-  config.toml       
+  config.toml
   system.md         # system prompt
   tokens.json       # OAuth tokens (auto-managed)
   skills/           # skill folder
+
+~/.agentgate/
+  aga.db            # SQLite
 ```
 
 `config.toml`
