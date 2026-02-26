@@ -113,10 +113,14 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			fatal(err)
 		}
+		var skillList []string
 		for _, s := range skills {
-			if s.Body != "" {
-				sysPrompt = sysPrompt + "\n\n" + s.Body
+			if !s.IsTool() && s.Description != "" {
+				skillList = append(skillList, fmt.Sprintf("- %s: %s", s.Name, s.Description))
 			}
+		}
+		if len(skillList) > 0 {
+			sysPrompt = sysPrompt + "\n\nAvailable skills (use read_skill tool to read full context):\n" + strings.Join(skillList, "\n")
 		}
 	}
 

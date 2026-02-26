@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -88,6 +89,9 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 				if s.IsTool() {
 					tools = append(tools, s.ToToolDef())
 				}
+			}
+			if a.hasReadableSkills() {
+				tools = append(tools, readSkillToolDef())
 			}
 		}
 		req := provider.Request{
@@ -179,6 +183,10 @@ func (a *Agent) RunMessages(ctx context.Context, messages []provider.Message) (s
 }
 
 func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.ToolResult {
+	if tc.Name == "read_skill" {
+		return a.handleReadSkill(tc)
+	}
+
 	s := a.findSkill(tc.Name)
 	if s == nil {
 		return provider.ToolResult{
@@ -259,6 +267,42 @@ func formatExecResult(r agexec.Result) string {
 		fmt.Fprintf(&b, "\n(exit code %d)", r.ExitCode)
 	}
 	return b.String()
+}
+
+func readSkillToolDef() provider.ToolDef {
+	return provider.ToolDef{
+		Name:        "read_skill",
+		Description: "Read the full context of a skill by name",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"name":{"type":"string","description":"skill name"}},"required":["name"]}`),
+	}
+}
+
+func (a *Agent) hasReadableSkills() bool {
+	for _, s := range a.Skills {
+		if !s.IsTool() && s.Body != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Agent) handleReadSkill(tc provider.ToolCall) provider.ToolResult {
+	var params struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(tc.Input), &params); err != nil {
+		return provider.ToolResult{ToolCallID: tc.ID, Content: "invalid input: expected {\"name\": \"...\"}", IsError: true}
+	}
+	for _, s := range a.Skills {
+		if s.Name == params.Name {
+			if s.Body == "" {
+				return provider.ToolResult{ToolCallID: tc.ID, Content: "skill has no readable content", IsError: true}
+			}
+			fmt.Fprintf(a.out(), "\n> read_skill %s\n", params.Name)
+			return provider.ToolResult{ToolCallID: tc.ID, Content: s.Body}
+		}
+	}
+	return provider.ToolResult{ToolCallID: tc.ID, Content: fmt.Sprintf("skill %q not found", params.Name), IsError: true}
 }
 
 // confirmFromTTY prompts the user on /dev/tty for confirmation.
