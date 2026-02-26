@@ -15,11 +15,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/TolgaOk/agentgate/internal/agent"
+	"github.com/TolgaOk/agentgate/internal/config"
 	"github.com/TolgaOk/agentgate/internal/prompt"
 	"github.com/TolgaOk/agentgate/internal/provider"
 	"github.com/TolgaOk/agentgate/internal/queue"
-	"github.com/TolgaOk/agentgate/internal/render"
-	"github.com/TolgaOk/agentgate/internal/session"
+"github.com/TolgaOk/agentgate/internal/session"
 	"github.com/TolgaOk/agentgate/internal/skill"
 )
 
@@ -38,8 +38,7 @@ func newAskCmd() *cobra.Command {
 	cmd.Flags().Int("max-tokens", 0, "Override max output tokens")
 	cmd.Flags().Duration("timeout", 0, "Overall timeout for the entire operation (e.g. 30s, 2m)")
 	cmd.Flags().String("session-id", "", "Tag this call for metrics tracking")
-	cmd.Flags().String("render", "", "Render markdown: auto, dark, light, raw")
-	cmd.Flags().Bool("no-tool", false, "Disable tool usage (text-only mode)")
+cmd.Flags().Bool("no-tool", false, "Disable tool usage (text-only mode)")
 	cmd.Flags().Bool("auto-accept", false, "Auto-accept tool calls that require confirmation (blocked commands are still rejected)")
 	return cmd
 }
@@ -66,7 +65,6 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	maxTokensFlag, _ := cmd.Flags().GetInt("max-tokens")
 	timeoutFlag, _ := cmd.Flags().GetDuration("timeout")
 	sessionID, _ := cmd.Flags().GetString("session-id")
-	renderFlag, _ := cmd.Flags().GetString("render")
 	noTool, _ := cmd.Flags().GetBool("no-tool")
 	autoAccept, _ := cmd.Flags().GetBool("auto-accept")
 
@@ -106,13 +104,16 @@ func runAsk(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Load skills from --skill directory.
+	// Load skills: default from ~/.config/agentgate/skills/, override with --skill.
+	if skillDir == "" {
+		cfgDir, _ := config.Dir()
+		if cfgDir != "" {
+			skillDir = filepath.Join(cfgDir, "skills")
+		}
+	}
 	var skills []skill.Skill
 	if skillDir != "" {
-		skills, err = skill.ParseDir(skillDir)
-		if err != nil {
-			fatal(err)
-		}
+		skills, _ = skill.ParseDir(skillDir)
 		var skillList []string
 		for _, s := range skills {
 			if !s.IsTool() && s.Description != "" {
@@ -189,12 +190,10 @@ func runAsk(cmd *cobra.Command, args []string) error {
 
 	// Choose output writer.
 	var out io.Writer
-	var sr *render.StreamRenderer
 	if jsonMode {
 		out = io.Discard
 	} else {
-		renderStyle := parseRenderStyle(renderFlag)
-		out, sr = makeOutput(renderStyle)
+		out = os.Stdout
 	}
 
 	a := &agent.Agent{
@@ -214,10 +213,6 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	}
 
 	_, usage, allMsgs, err := a.RunMessages(ctx, sess.Messages)
-	if sr != nil {
-		sr.Finish()
-	}
-
 	if err != nil {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, styleErr.Render("error: "+err.Error()))
@@ -248,30 +243,6 @@ func lastAssistantText(msgs []provider.Message) string {
 		}
 	}
 	return ""
-}
-
-func parseRenderStyle(flag string) render.Style {
-	switch flag {
-	case "auto":
-		return render.StyleAuto
-	case "dark":
-		return render.StyleDark
-	case "light":
-		return render.StyleLight
-	default:
-		return ""
-	}
-}
-
-func makeOutput(style render.Style) (io.Writer, *render.StreamRenderer) {
-	if style != "" {
-		sr, err := render.NewStreamRenderer(os.Stdout, style)
-		if err != nil {
-			fatal(err)
-		}
-		return sr, sr
-	}
-	return os.Stdout, nil
 }
 
 type jsonResult struct {
