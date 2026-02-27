@@ -9,6 +9,12 @@
 
 ## Install
 
+```bash
+curl -fsSL https://raw.githubusercontent.com/TolgaOk/agentgate/main/scripts/install.sh | bash
+```
+
+Or with Go:
+
 ```
 go install github.com/TolgaOk/agentgate/cmd/aga@latest
 ```
