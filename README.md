@@ -4,7 +4,7 @@
 [![v0.1.0](https://img.shields.io/badge/v0.1.0-green)]()
 [![macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)]()
 
-`aga` (short for Agent Gate) is a **lightweight LLM hub** designed for agentic workflows (humans welcome). It comes with built-in concurrency, tool execution, rate limiting, and conversation persistence.
+`aga` (short for Agent Gate) is a **lightweight LLM hub** designed for agentic workflows (human usage welcome too). It comes with built-in concurrency, tool execution, rate limiting, and conversation persistence.
 
 
 ## Install
@@ -82,7 +82,7 @@ metadata:
 
 Skills with `metadata.command` in the frontmatter are registered as **tools**.
 
-**Note**: `aga` comes barebones with no tools or skills.
+**Note**: `aga` comes barebones with no tools or skills. You can add `bash` tool to cover most use cases or each CLI tool individually (including `aga` itself).
 
 ## Providers
 
