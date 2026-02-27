@@ -35,6 +35,7 @@ func TestIntegrationTextOnly(t *testing.T) {
 		Model:        model,
 		SystemPrompt: "You are a helpful assistant. Be very brief.",
 		MaxTokens:    256,
+		MaxSteps:     10,
 		Out:          &buf,
 	}
 
@@ -60,6 +61,7 @@ func TestIntegrationToolCall(t *testing.T) {
 		Model:        model,
 		SystemPrompt: "You have a bash tool. Use it to run commands. Be brief.",
 		MaxTokens:    512,
+		MaxSteps:     10,
 		Out:          &buf,
 	}
 

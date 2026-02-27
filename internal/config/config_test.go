@@ -32,6 +32,11 @@ concurrent_per_provider_limit = 2
 		MaxSteps:                   20,
 		ConcurrentGlobalLimit:      5,
 		ConcurrentPerProviderLimit: 2,
+		PolicyConfig: PolicyConfig{
+			Timeout: "30s",
+			Allowed: []string{},
+			Blocked: []string{},
+		},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Errorf("Load() mismatch (-want +got):\n%s", diff)

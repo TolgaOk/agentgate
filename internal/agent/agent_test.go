@@ -9,6 +9,7 @@ import (
 
 	"github.com/TolgaOk/agentgate/internal/policy"
 	"github.com/TolgaOk/agentgate/internal/provider"
+	"github.com/TolgaOk/agentgate/internal/skill"
 )
 
 // mockProvider sends canned responses based on call count.
@@ -63,6 +64,7 @@ func TestTextOnlyResponse(t *testing.T) {
 	a := &Agent{
 		Provider: mock,
 		Policy:   policy.Default(),
+		MaxSteps: 10,
 		Out:      &buf,
 	}
 
@@ -106,6 +108,7 @@ func TestToolCallThenText(t *testing.T) {
 	a := &Agent{
 		Provider: mock,
 		Policy:   policy.Default(),
+		MaxSteps: 10,
 		Out:      &buf,
 	}
 
@@ -131,7 +134,7 @@ func TestBlockedCommand(t *testing.T) {
 		responses: []mockResponse{
 			{
 				toolCalls: []provider.ToolCall{
-					{ID: "tc_1", Name: "bash", Input: "sudo rm -rf /"},
+					{ID: "tc_1", Name: "bash", Input: `{"command":"sudo whoami"}`},
 				},
 				usage: provider.Usage{InputTokens: 10, OutputTokens: 5},
 			},
@@ -143,8 +146,15 @@ func TestBlockedCommand(t *testing.T) {
 	var buf bytes.Buffer
 	a := &Agent{
 		Provider: mock,
-		Policy:   policy.Default(),
-		Out:      &buf,
+		Policy: policy.Policy{
+			Blocked: []string{"bash"},
+		},
+		MaxSteps: 10,
+		Skills: []skill.Skill{{
+			Name: "bash",
+			Tool: &skill.ToolMeta{Command: "bash"},
+		}},
+		Out: &buf,
 	}
 
 	text, _, err := a.Run(context.Background(), "delete everything")
@@ -179,6 +189,7 @@ func TestMaxStepsExceeded(t *testing.T) {
 	a := &Agent{
 		Provider: mock,
 		Policy:   policy.Default(),
+		MaxSteps: 5,
 		Out:      &buf,
 	}
 
@@ -186,7 +197,7 @@ func TestMaxStepsExceeded(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for max steps exceeded")
 	}
-	if mock.callCount != maxSteps {
-		t.Errorf("callCount = %d, want %d", mock.callCount, maxSteps)
+	if mock.callCount != a.MaxSteps {
+		t.Errorf("callCount = %d, want %d", mock.callCount, a.MaxSteps)
 	}
 }

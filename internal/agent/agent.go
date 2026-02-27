@@ -196,6 +196,16 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 		}
 	}
 
+	decision := a.Policy.Check(s.Tool.Command)
+	if decision.Kind == policy.Block {
+		fmt.Fprintf(a.out(), "\n[BLOCKED] %s: %s\n", tc.Name, decision.Reason)
+		return provider.ToolResult{
+			ToolCallID: tc.ID,
+			Content:    fmt.Sprintf("BLOCKED: %s", decision.Reason),
+			IsError:    true,
+		}
+	}
+
 	argv, err := s.BuildArgv(tc.Input)
 	if err != nil {
 		return provider.ToolResult{
@@ -206,16 +216,8 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 	}
 
 	display := strings.Join(argv, " ")
-	decision := a.Policy.Check(s.Tool.Command)
 
 	switch decision.Kind {
-	case policy.Block:
-		fmt.Fprintf(a.out(), "\n[BLOCKED] %s: %s\n", display, decision.Reason)
-		return provider.ToolResult{
-			ToolCallID: tc.ID,
-			Content:    fmt.Sprintf("BLOCKED: %s", decision.Reason),
-			IsError:    true,
-		}
 	case policy.Confirm:
 		if !a.AutoAccept && !confirmFromTTY(display) {
 			fmt.Fprintln(a.out(), "\n[DENIED by user]")
@@ -236,13 +238,12 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 			IsError:    true,
 		}
 	}
-	content := formatExecResult(result)
-	if content != "" {
-		fmt.Fprintf(a.out(), "\033[90m%s\033[0m\n", content)
+	if result.Stdout != "" {
+		fmt.Fprintf(a.out(), "\033[90m%s\033[0m\n", strings.TrimSpace(result.Stdout))
 	}
 	return provider.ToolResult{
 		ToolCallID: tc.ID,
-		Content:    content,
+		Content:    formatExecResult(result),
 	}
 }
 

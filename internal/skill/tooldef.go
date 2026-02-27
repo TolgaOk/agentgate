@@ -155,8 +155,12 @@ func (s *Skill) BuildArgv(rawJSON string) ([]string, error) {
 	}
 	var positionals []positional
 
-	// Collect flag args.
-	var flags []string
+	// Collect flag args as pairs (flag + optional value).
+	type flagPair struct {
+		flag  string
+		value string // empty for boolean flags
+	}
+	var flags []flagPair
 
 	for name, arg := range args {
 		raw, ok := params[name]
@@ -177,16 +181,21 @@ func (s *Skill) BuildArgv(rawJSON string) ([]string, error) {
 		if arg.Flag != "" {
 			if arg.Type == "boolean" {
 				if value == "true" {
-					flags = append(flags, arg.Flag)
+					flags = append(flags, flagPair{flag: arg.Flag})
 				}
-			} else {
-				flags = append(flags, arg.Flag, value)
+			} else if value != "" {
+				flags = append(flags, flagPair{flag: arg.Flag, value: value})
 			}
 		}
 	}
 
-	sort.Strings(flags)
-	argv = append(argv, flags...)
+	sort.Slice(flags, func(i, j int) bool { return flags[i].flag < flags[j].flag })
+	for _, f := range flags {
+		argv = append(argv, f.flag)
+		if f.value != "" {
+			argv = append(argv, f.value)
+		}
+	}
 
 	sort.Slice(positionals, func(i, j int) bool {
 		return positionals[i].pos < positionals[j].pos
