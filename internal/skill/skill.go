@@ -22,8 +22,15 @@ type Skill struct {
 
 // ToolMeta defines the CLI command and typed arguments for a tool skill.
 type ToolMeta struct {
-	Command string
-	Args    map[string]ArgDef
+	Command     string
+	Args        map[string]ArgDef
+	Subcommands map[string]SubcommandDef // if set, "subcommand" is an enum arg
+}
+
+// SubcommandDef describes a subcommand within a tool skill.
+type SubcommandDef struct {
+	Desc string            `yaml:"desc"`
+	Args map[string]ArgDef `yaml:"args"`
 }
 
 // ArgDef describes a single argument for a tool skill.
@@ -40,8 +47,9 @@ type frontmatterData struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 	Metadata    *struct {
-		Command string            `yaml:"command"`
-		Args    map[string]ArgDef `yaml:"args"`
+		Command     string                    `yaml:"command"`
+		Args        map[string]ArgDef         `yaml:"args"`
+		Subcommands map[string]SubcommandDef  `yaml:"subcommands"`
 	} `yaml:"metadata"`
 }
 
@@ -97,8 +105,9 @@ func buildSkill(fm frontmatterData, body, source string) Skill {
 
 	if fm.Metadata != nil && fm.Metadata.Command != "" {
 		s.Tool = &ToolMeta{
-			Command: fm.Metadata.Command,
-			Args:    fm.Metadata.Args,
+			Command:     fm.Metadata.Command,
+			Args:        fm.Metadata.Args,
+			Subcommands: fm.Metadata.Subcommands,
 		}
 	}
 

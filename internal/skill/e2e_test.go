@@ -136,6 +136,78 @@ func TestE2E_PromptSkillHasNoTool(t *testing.T) {
 	}
 }
 
+func TestE2E_SubcommandSkill(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mycli.md"), []byte(`---
+name: mycli
+description: A CLI with subcommands
+metadata:
+  command: echo
+  subcommands:
+    hello:
+      desc: Say hello
+      args:
+        name:
+          type: string
+          required: true
+          position: 1
+          desc: who to greet
+    version:
+      desc: Show version
+      args: {}
+---
+`), 0644)
+
+	skills, err := ParseDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("len(skills) = %d, want 1", len(skills))
+	}
+
+	s := skills[0]
+	if s.Name != "mycli" {
+		t.Errorf("name = %q, want mycli", s.Name)
+	}
+
+	// subcommand=hello → ["echo", "hello", "world"]
+	argv, err := s.BuildArgv(`{"subcommand": "hello", "name": "world"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgv := []string{"echo", "hello", "world"}
+	if !slicesEqual(argv, wantArgv) {
+		t.Fatalf("argv = %v, want %v", argv, wantArgv)
+	}
+
+	result, err := agexec.ExecuteDirect(context.Background(), argv, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(result.Stdout) != "hello world" {
+		t.Errorf("stdout = %q, want 'hello world'", result.Stdout)
+	}
+
+	// subcommand=version → ["echo", "version"]
+	argv, err = s.BuildArgv(`{"subcommand": "version"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgv = []string{"echo", "version"}
+	if !slicesEqual(argv, wantArgv) {
+		t.Fatalf("argv = %v, want %v", argv, wantArgv)
+	}
+
+	result, err = agexec.ExecuteDirect(context.Background(), argv, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(result.Stdout) != "version" {
+		t.Errorf("stdout = %q, want 'version'", result.Stdout)
+	}
+}
+
 func TestE2E_MixedSkillDir(t *testing.T) {
 	dir := t.TempDir()
 

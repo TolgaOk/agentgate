@@ -184,6 +184,127 @@ metadata:
 	}
 }
 
+func TestParseSubcommands(t *testing.T) {
+	content := `---
+name: aga
+description: LLM hub for agentic workflows
+metadata:
+  command: aga
+  subcommands:
+    ask:
+      desc: Run a prompt
+      args:
+        prompt:
+          type: string
+          required: true
+          position: 1
+          desc: the prompt to send
+        json:
+          type: boolean
+          flag: "--json"
+          desc: return structured JSON output
+    metrics:
+      desc: Show usage summary
+      args: {}
+---
+Use aga for LLM tasks.
+`
+	s, err := Parse(content, "aga.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Name != "aga" {
+		t.Errorf("Name = %q, want aga", s.Name)
+	}
+	if s.Tool == nil {
+		t.Fatal("Tool is nil")
+	}
+	if len(s.Tool.Subcommands) != 2 {
+		t.Fatalf("len(Subcommands) = %d, want 2", len(s.Tool.Subcommands))
+	}
+	if !s.IsTool() {
+		t.Error("IsTool() = false, want true")
+	}
+
+	// BuildArgv with subcommand=ask
+	argv, err := s.BuildArgv(`{"subcommand": "ask", "prompt": "hello world", "json": true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"aga", "ask", "--json", "hello world"}
+	if !slicesEqual(argv, want) {
+		t.Errorf("argv = %v, want %v", argv, want)
+	}
+
+	// BuildArgv with subcommand=metrics
+	argv, err = s.BuildArgv(`{"subcommand": "metrics"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMetrics := []string{"aga", "metrics"}
+	if !slicesEqual(argv, wantMetrics) {
+		t.Errorf("argv = %v, want %v", argv, wantMetrics)
+	}
+
+	// Missing subcommand → error
+	_, err = s.BuildArgv(`{"prompt": "hello"}`)
+	if err == nil {
+		t.Error("expected error for missing subcommand")
+	}
+
+	// Unknown subcommand → error
+	_, err = s.BuildArgv(`{"subcommand": "nope"}`)
+	if err == nil {
+		t.Error("expected error for unknown subcommand")
+	}
+}
+
+func TestParseDirWithSubcommands(t *testing.T) {
+	dir := t.TempDir()
+
+	// Skill with subcommands — stays as one skill
+	os.WriteFile(filepath.Join(dir, "aga.md"), []byte(`---
+name: aga
+description: LLM hub
+metadata:
+  command: aga
+  subcommands:
+    ask:
+      desc: Run a prompt
+      args:
+        prompt:
+          type: string
+          required: true
+          position: 1
+    metrics:
+      desc: Show metrics
+      args: {}
+---
+`), 0644)
+
+	// Regular skill
+	os.WriteFile(filepath.Join(dir, "helper.md"), []byte("Just a prompt."), 0644)
+
+	skills, err := ParseDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should be 2: aga (one tool with subcommands), helper
+	if len(skills) != 2 {
+		t.Fatalf("len(skills) = %d, want 2", len(skills))
+	}
+
+	names := map[string]bool{}
+	for _, s := range skills {
+		names[s.Name] = true
+	}
+	for _, want := range []string{"aga", "helper"} {
+		if !names[want] {
+			t.Errorf("missing skill %q, got %v", want, names)
+		}
+	}
+}
+
 func TestNameFromPath(t *testing.T) {
 	tests := []struct {
 		path string

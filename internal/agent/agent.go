@@ -206,7 +206,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 	}
 
 	display := strings.Join(argv, " ")
-	decision := a.Policy.Check(tc.Name)
+	decision := a.Policy.Check(s.Tool.Command)
 
 	switch decision.Kind {
 	case policy.Block:
@@ -236,9 +236,13 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) provider.
 			IsError:    true,
 		}
 	}
+	content := formatExecResult(result)
+	if content != "" {
+		fmt.Fprintf(a.out(), "\033[90m%s\033[0m\n", content)
+	}
 	return provider.ToolResult{
 		ToolCallID: tc.ID,
-		Content:    formatExecResult(result),
+		Content:    content,
 	}
 }
 

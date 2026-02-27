@@ -5,34 +5,77 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/TolgaOk/agentgate/internal/provider"
 )
 
 // ToToolDef converts a tool skill into a provider.ToolDef with a JSON Schema InputSchema.
+// If the skill has subcommands, a "subcommand" enum property is added and all
+// subcommand args are merged into the schema.
 // Panics if the skill is not a tool skill (Tool == nil).
 func (s *Skill) ToToolDef() provider.ToolDef {
 	if s.Tool == nil {
 		panic("skill: ToToolDef called on prompt-only skill " + s.Name)
 	}
 
-	properties := map[string]map[string]string{}
+	properties := map[string]any{}
 	var required []string
 
-	for name, arg := range s.Tool.Args {
-		prop := map[string]string{
-			"type": arg.Type,
+	// If subcommands exist, add enum property and merge their args.
+	if len(s.Tool.Subcommands) > 0 {
+		var names []string
+		var descs []string
+		for name, sub := range s.Tool.Subcommands {
+			names = append(names, name)
+			if sub.Desc != "" {
+				descs = append(descs, name+": "+sub.Desc)
+			}
 		}
-		if arg.Type == "" {
-			prop["type"] = "string"
-		}
-		if arg.Desc != "" {
-			prop["description"] = arg.Desc
-		}
-		properties[name] = prop
+		sort.Strings(names)
+		sort.Strings(descs)
 
-		if arg.Required {
-			required = append(required, name)
+		subcmdProp := map[string]any{
+			"type": "string",
+			"enum": names,
+		}
+		if len(descs) > 0 {
+			subcmdProp["description"] = strings.Join(descs, "; ")
+		}
+		properties["subcommand"] = subcmdProp
+		required = append(required, "subcommand")
+
+		// Merge args from all subcommands.
+		for _, sub := range s.Tool.Subcommands {
+			for name, arg := range sub.Args {
+				if _, exists := properties[name]; exists {
+					continue // already added by another subcommand
+				}
+				prop := map[string]string{"type": arg.Type}
+				if arg.Type == "" {
+					prop["type"] = "string"
+				}
+				if arg.Desc != "" {
+					prop["description"] = arg.Desc
+				}
+				properties[name] = prop
+			}
+		}
+	} else {
+		// No subcommands — flat args.
+		for name, arg := range s.Tool.Args {
+			prop := map[string]string{"type": arg.Type}
+			if arg.Type == "" {
+				prop["type"] = "string"
+			}
+			if arg.Desc != "" {
+				prop["description"] = arg.Desc
+			}
+			properties[name] = prop
+
+			if arg.Required {
+				required = append(required, name)
+			}
 		}
 	}
 	sort.Strings(required)
@@ -58,6 +101,7 @@ func (s *Skill) ToToolDef() provider.ToolDef {
 // The first element is always the command binary.
 //
 // Mapping rules:
+//   - subcommand param → inserted after command (e.g. "aga" "ask" ...)
 //   - position: N (1+) → positional arg at that index
 //   - flag + boolean true → append flag (e.g. "-a")
 //   - flag + string value → append flag then value (e.g. "--type" "go")
@@ -72,16 +116,37 @@ func (s *Skill) BuildArgv(rawJSON string) ([]string, error) {
 		return nil, fmt.Errorf("skill: parse input JSON: %w", err)
 	}
 
+	argv := []string{s.Tool.Command}
+
+	// Resolve which args to use.
+	args := s.Tool.Args
+	if len(s.Tool.Subcommands) > 0 {
+		// Extract subcommand from params.
+		raw, ok := params["subcommand"]
+		if !ok {
+			return nil, fmt.Errorf("skill: missing required argument %q", "subcommand")
+		}
+		var subcmd string
+		if err := json.Unmarshal(raw, &subcmd); err != nil {
+			return nil, fmt.Errorf("skill: argument %q: expected string: %w", "subcommand", err)
+		}
+		sub, ok := s.Tool.Subcommands[subcmd]
+		if !ok {
+			return nil, fmt.Errorf("skill: unknown subcommand %q", subcmd)
+		}
+		argv = append(argv, subcmd)
+		args = sub.Args
+		delete(params, "subcommand")
+	}
+
 	// Check required args.
-	for name, arg := range s.Tool.Args {
+	for name, arg := range args {
 		if arg.Required {
 			if _, ok := params[name]; !ok {
 				return nil, fmt.Errorf("skill: missing required argument %q", name)
 			}
 		}
 	}
-
-	argv := []string{s.Tool.Command}
 
 	// Collect positional args (sorted by position).
 	type positional struct {
@@ -93,7 +158,7 @@ func (s *Skill) BuildArgv(rawJSON string) ([]string, error) {
 	// Collect flag args.
 	var flags []string
 
-	for name, arg := range s.Tool.Args {
+	for name, arg := range args {
 		raw, ok := params[name]
 		if !ok {
 			continue
